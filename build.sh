@@ -1,0 +1,1 @@
+odin build main.odin -out=oth
