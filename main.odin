@@ -4,6 +4,15 @@ import "core:fmt"
 import "core:os"
 import "pthread"
 
+// ring_buffer :: struct(T: typeid, N: int) {
+//     cond: ^pthread.cond
+//     buffer: [N]T,
+//     write: int,
+//     read: int,
+// }
+
+// shared_buffer: ring_buffer(int, 30);
+
 th1_proc :: proc "cdecl" (data: rawptr) -> rawptr {
     fmt.println("hello, from thread1");
     os.nanosleep(100);
@@ -23,8 +32,22 @@ th2_proc :: proc "cdecl" (data: rawptr) -> rawptr {
     return nil;
 }
 
+th3_proc :: proc(start: int) -> ^int {
+    fmt.println("hello from thread3");
+    end := start + 10;
+    for i in start..<end {
+        os.nanosleep(100);
+        fmt.println("th[3]: ", i);
+    }
+    ret := new(int);
+    ret^ = end;
+    return ret;
+}
+
 main :: proc() {
     fmt.println("hello odin threads");
+
+    // pthread.cond_init(shared_buffer.cond);
 
     th1: pthread.handle;
     pthread.create(&th1, nil, th1_proc, nil);
@@ -32,45 +55,51 @@ main :: proc() {
     th2: pthread.handle;
     pthread.create(&th2, nil, th2_proc, nil);
 
+    th3 := go(th3_proc, 112);
+
     pthread.join(th1, nil);
     pthread.join(th2, nil);
+    th3_result := come(&th3);
+
+    fmt.println("\n\nth3 value:", th3_result^);
 }
 
-/*
+// custom thread launching
 
-#include <stdio.h>
-#include <pthread.h>
-#include <stdatomic.h>
-
-struct ring_buffer {
-    int[100] buffer;
-    int header;
-    int tail;
-};
-
-void* processor_thread(void *data) {
-    printf("hello, I'm the other thread\n");
-    return 0;
+start_info :: struct(T, S: typeid) {
+    ctx: type_of(context),
+    start: proc(i: T) -> ^S,
+    data: T,
 }
 
-struct pusher_data {
-    pthread_t *processor;
-    ring_buffer *items;
-};
-
-void* pusher_thread(void *vdata) {
-    pusher_data_t *data = (pusher_data_t *)vdata;
-    printf("hello, I'm the pusher thread\n");
-    return 0;
+thread_handle :: struct(T, S: typeid) {
+    handle: pthread.handle,
+    props: ^start_info(T, S), // to be freed when done
+    // start: proc(i: T) -> ^S, // hack to carry around the type information
 }
 
-int main() {
-    printf("welcome to threads\n");
-    pthread_t th1;
-    pthread_t th2;
-    pthread_create(&th1, 0, pusher_thread, 0);
-    pthread_create(&th2, 0, processor_thread, 0);
-    pthread_join(th1, 0);
-    pthread_join(th2, 0);
+go :: proc(start: proc(i: $T) -> ^$S, data: T) -> thread_handle(T, S) {
+
+    spawner :: proc "cdecl" (rparams: rawptr) -> rawptr {
+        params := cast(^start_info(T, S))(rparams);
+        context = params.ctx;
+        return params.start(params.data);
+    }
+    h: pthread.handle;
+    props := new(start_info(T, S));
+    props.ctx = context;
+    props.start = start;
+    props.data = data;
+    pthread.create(&h, nil, spawner, props);
+    return thread_handle(T, S){
+        handle = h,
+        props = props,
+    };
 }
- */
+
+come :: proc(handle: ^thread_handle($T, $S)) -> ^S {
+    ret: ^S;
+    pthread.join(handle.handle, cast(^rawptr)(&ret));
+    free(handle.props);
+    return ret;
+}
