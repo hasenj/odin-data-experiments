@@ -4,8 +4,13 @@ package pthread
 handle :: distinct rawptr;
 attr :: distinct rawptr;
 
-cond :: opaque struct{};
+cond :: opaque struct {
+	__opaque: [48]byte
+};
 
+cond_attr :: opaque struct {
+	__opaque: [16]byte
+};
 
 // sched_param stuff based on
 // https://github.com/dlang/druntime/blob/a59c3832fc00ab127018d9a570ba03520437524f/src/core/sys/posix/sched.d
@@ -34,7 +39,7 @@ foreign pthread {
     create :: proc(th: ^handle, attr: ^attr, routine: proc(rawptr) -> rawptr, data: rawptr) -> i32 ---;
     join :: proc(th: handle, ret: ^rawptr) -> i32 ---;
 
-    cond_init :: proc(cond: ^cond) -> i32 ---;
+    cond_init :: proc(cond: ^cond, attr: ^cond_attr) -> i32 ---;
     cond_destroy :: proc(cond: ^cond) -> i32 ---;
 
 
