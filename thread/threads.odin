@@ -1,5 +1,6 @@
 package thread
 
+import "core:os"
 import "../pthread"
 
 start_info :: struct(T, S: typeid) {
@@ -15,7 +16,7 @@ thread_handle :: struct(T, S: typeid) {
     // start: proc(i: T) -> S, // hack to carry around the type information
 }
 
-go :: proc(start: proc(i: $T) -> $S, data: T) -> thread_handle(T, S) {
+go :: proc(start: proc(i: $T) -> $S, data: T, attrs: ^pthread.attr = nil) -> thread_handle(T, S) {
     spawner :: proc "cdecl" (rparams: rawptr) -> rawptr {
         params := cast(^start_info(T, S))(rparams);
         context = params.ctx;
@@ -28,7 +29,7 @@ go :: proc(start: proc(i: $T) -> $S, data: T) -> thread_handle(T, S) {
     props.start = start;
     props.data = data;
     props.output = new(S);
-    pthread.create(&h, nil, spawner, props);
+    pthread.create(&h, attrs, spawner, props);
     return thread_handle(T, S){
         handle = h,
         props = props,
@@ -41,4 +42,8 @@ come :: proc(handle: ^thread_handle($T, $S)) -> S {
     free(handle.props.output);
     free(handle.props);
     return ret;
+}
+
+detach :: proc(handle: $T/thread_handle) -> os.Errno {
+    return cast(os.Errno)pthread.detach(handle.handle);
 }

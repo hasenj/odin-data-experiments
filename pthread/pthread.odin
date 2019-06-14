@@ -2,7 +2,10 @@ package pthread
 
 
 handle :: distinct rawptr;
-attr :: distinct rawptr;
+
+attr :: distinct struct {
+    __opaque: [64]byte,
+};
 
 cond :: opaque struct {
 	__opaque: [48]byte
@@ -38,6 +41,7 @@ foreign import pthread "system:pthread"
 foreign pthread {
     create :: proc(th: ^handle, attr: ^attr, routine: proc(rawptr) -> rawptr, data: rawptr) -> i32 ---;
     join :: proc(th: handle, ret: ^rawptr) -> i32 ---;
+    detach :: proc(th: handle) -> i32 ---;
 
     cond_init :: proc(cond: ^cond, attr: ^cond_attr) -> i32 ---;
     cond_destroy :: proc(cond: ^cond) -> i32 ---;

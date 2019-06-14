@@ -9,13 +9,14 @@ respond :: proc(s: socket.handle) -> int {
     // fmt.println("started thread to respond");
 	socket.sendall(s, cast([]byte)("HTTP/1.1 200 OK\n\n" +
     "Hello from odin!"));
-    try(socket.shutdown(s, 1));
+    try("socket-shutdown", socket.shutdown(s, 2));
+    socket.close(s);
 	return 0;
 }
 
-try :: proc(e: os.Errno) {
+try :: proc(msg: string, e: os.Errno) {
     if e != 0 {
-        fmt.println(os.strerror(e));
+        fmt.printf("%s: %s\n", msg, os.strerror(e));
     }
 }
 
@@ -32,9 +33,10 @@ must :: proc(a: $T, b: os.Errno) -> T {
 }
 
 start :: proc(port: u16) -> int {
-	fmt.println("Starting server! Make sure to start this as a thread");
+	fmt.println("Starting server on port", port);
 
 	sock := must(socket.make_tcp_socket());
+    socket.set_option_reuse_address(sock, true);
 	addr := socket.make_address(port);
 
 	socket.bind(sock, &addr);
@@ -49,7 +51,7 @@ start :: proc(port: u16) -> int {
             continue;
         }
         // fmt.println("accepted connection!!");
-        thread.go(respond, client_sock);
+        thread.detach(thread.go(respond, client_sock));
     }
 
 	return 0;

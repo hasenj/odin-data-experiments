@@ -155,3 +155,7 @@ shutdown :: proc(fd: handle, how: i32) -> os.Errno {
         return 0;
     }
 }
+
+close :: proc(fd: handle) {
+    os.close(os.Handle(fd));
+}
