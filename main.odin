@@ -3,6 +3,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "pthread"
+import "server"
 
 ring_buffer :: struct(T: typeid, N: int) {
     cond: pthread.cond,
@@ -45,6 +46,8 @@ th3_proc :: proc(start: int) -> int {
 main :: proc() {
     fmt.println("hello odin threads");
 
+    th_server := go(server.start, 3040);
+
     pthread.cond_init(&shared_buffer.cond, nil);
 
     th1: pthread.handle;
@@ -60,6 +63,9 @@ main :: proc() {
     th3_result := come(&th3);
 
     fmt.println("\n\nth3 value:", th3_result);
+
+    come(&th_server);
+    fmt.println("server came!");
 }
 
 // custom thread launching
