@@ -6,12 +6,10 @@ import "../socket"
 import "../thread"
 
 respond :: proc(s: socket.handle) -> int {
-    fmt.println("started thread to respond");
-	socket.sendall(s, cast([]byte)`HTTP/1.1 200 OK
-
-    Hello World!!!!! FROM ODIN!
-    `);
-    try(socket.shutdown(s, 2));
+    // fmt.println("started thread to respond");
+	socket.sendall(s, cast([]byte)("HTTP/1.1 200 OK\n\n" +
+    "Hello from odin!"));
+    try(socket.shutdown(s, 1));
 	return 0;
 }
 
@@ -50,7 +48,7 @@ start :: proc(port: u16) -> int {
             fmt.println("error acceping connection", os.strerror(err));
             continue;
         }
-        fmt.println("accepted connection!!");
+        // fmt.println("accepted connection!!");
         thread.go(respond, client_sock);
     }
 
