@@ -1,6 +1,4 @@
-package csock
-
-import "core:C"
+package csocket
 
 // reference: https://beej.us/guide/bgnet/html/multi/sockaddr_inman.html
 
@@ -35,31 +33,32 @@ sockaddr_in6 :: struct {
 foreign import libc "system:c";
 @(default_calling_convention="c")
 foreign libc {
-    socket :: proc(domain: c.int, type_: c.int, protocol: c.int) -> c.int ---;
-    bind :: proc(sockfd: c.int, addr: ^sockaddr, addrlen: c.uint) -> c.int ---;
-    accept :: proc(sockfd: c.int, addr: ^sockaddr, addrlen: ^c.uint) -> c.int ---;
-    listen :: proc(sockfd: c.int, backlog: c.int) -> c.int ---;
+    socket :: proc(domain: i32, type_: i32, protocol: i32) -> i32 ---;
+    bind :: proc(sockfd: i32, addr: ^sockaddr, addrlen: u32) -> i32 ---;
+    accept :: proc(sockfd: i32, addr: ^sockaddr, addrlen: ^u32) -> i32 ---;
+    listen :: proc(sockfd: i32, backlog: i32) -> i32 ---;
+    shutdown :: proc(sockfd: i32, how: i32) -> i32 ---;
 
     // https://beej.us/guide/bgnet/html/multi/setsockoptman.html
-    getsockopt :: proc (sockfd: c.int, level: c.int, optname: c.int, optval: rawptr, optlen: ^c.uint) -> c.int ---;
-    setsockopt :: proc (sockfd: c.int, level: c.int, optname: c.int, optval: rawptr, optlen: c.uint) -> c.int ---;
+    getsockopt :: proc (sockfd: i32, level: i32, optname: i32, optval: rawptr, optlen: ^u32) -> i32 ---;
+    setsockopt :: proc (sockfd: i32, level: i32, optname: i32, optval: rawptr, optlen: u32) -> i32 ---;
 
     htonl :: proc(hostlong: u32) -> u32 ---;
     htons :: proc(hostshort: u16) -> u16 ---;
     ntohl :: proc(netlong: u32) -> u32 ---;
     ntohs :: proc(netshort: u16) -> u16 ---;
 
-    recv :: proc(s: c.int, buf: rawptr, len: c.size_t, flags: c.int) -> c.ssize_t ---;
-    recvfrom :: proc(s: c.int, buf: rawptr, len: c.size_t, flags: c.int, addr: ^sockaddr, addrlen: ^c.uint) -> c.ssize_t ---;
+    recv :: proc(s: i32, buf: rawptr, len: uint, flags: i32) -> int ---;
+    recvfrom :: proc(s: i32, buf: rawptr, len: uint, flags: i32, addr: ^sockaddr, addrlen: ^u32) -> int ---;
 
-    send :: proc(s: c.int, msg: rawptr, len: c.int, flags: c.int) -> c.ssize_t ---;
-    sendto :: proc(s: c.int, msg: rawptr, len: c.int, flags: c.int,  addr: ^sockaddr, addrlen: ^c.uint) -> c.ssize_t ---;
+    send :: proc(s: i32, msg: rawptr, len: uint, flags: i32) -> int ---;
+    sendto :: proc(s: i32, msg: rawptr, len: i32, flags: i32,  addr: ^sockaddr, addrlen: ^u32) -> int ---;
 
     // int fcntl(int fd, int cmd, ... /* arg */ );
-    fcntl :: proc(fd: c.int, cmd: c.int, args: ..any) -> c.int ---;
+    fcntl :: proc(fd: i32, cmd: i32, args: ..any) -> i32 ---;
 
     // posix signals
-    signal :: proc(sig: c.int, handler: proc(sig: c.int)) -> c.int ---;
+    signal :: proc(sig: i32, handler: proc(sig: i32)) -> i32 ---;
 }
 
 hton :: proc {htonl, htons};

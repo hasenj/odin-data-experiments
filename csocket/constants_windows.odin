@@ -1,5 +1,4 @@
-package csock
-
+package csocket
 
 // not present in windows but this should be harmless I think?
 MSG_NOSIGNAL :: 0;

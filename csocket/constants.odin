@@ -1,4 +1,4 @@
-package csock
+package csocket
 
 SOCK_STREAM :: 1;
 SOCK_DGRAM :: 2;
@@ -7,7 +7,6 @@ SOCK_RAW :: 3;
 IPPROTO_TCP :: 6;
 IPPROTO_IP :: 0;
 IPPROTO_IPV6 :: 41;
-
 
 SOL_SOCKET :: 0xffff;
 SO_REUSEADDR :: 0x0004;
