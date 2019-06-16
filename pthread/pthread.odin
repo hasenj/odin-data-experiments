@@ -46,6 +46,7 @@ foreign pthread {
     cond_init :: proc(cond: ^cond, attr: ^cond_attr) -> i32 ---;
     cond_destroy :: proc(cond: ^cond) -> i32 ---;
 
+    self :: proc() -> handle ---;
 
     attr_init :: proc(attr: ^attr) -> i32 ---;
     attr_destroy :: proc(attr: ^attr,) -> i32 ---;

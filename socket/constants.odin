@@ -1,17 +1,20 @@
-package csocket
+package socket
 
-SOCK_STREAM :: 1;
-SOCK_DGRAM :: 2;
-SOCK_RAW :: 3;
+socket_type :: enum i32 {
+    STREAM = 1,
+    DGRAM  = 2,
+    RAW    = 3,
+}
 
-IPPROTO_TCP :: 6;
-IPPROTO_IP :: 0;
-IPPROTO_IPV6 :: 41;
+protocol :: enum i32 {
+    AUTO = 0,
+    TCP  = 6,
+    UDP  = 17,
+}
 
-SOL_SOCKET :: 0xffff;
-SO_REUSEADDR :: 0x0004;
-
-INADDR_ANY :: 0;
+level :: enum i32 {
+    SOCKET = 0xffff,
+}
 
 // for async
 O_NONBLOCK	:: 0x0004;		/* no delay */
