@@ -13,7 +13,9 @@ respond :: proc(s: socket.handle) -> int {
 	// fmt.println(request);
 
 	socket.sendall(s, cast([]byte)("HTTP/1.1 200 OK\n" +
-    "Connection: close\n\n" +
+    "Content-Length: 16\n" + // HACK! hard-coded!
+    "Connection: close\n" +
+    "\n" +
     "Hello from odin!"));
     try("socket-shutdown", socket.shutdown(s, .RDWR));
     socket.close(s);
