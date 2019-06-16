@@ -20,6 +20,7 @@ go :: proc(start: proc(i: $T) -> $S, data: T, attrs: ^pthread.attr = nil) -> thr
     spawner :: proc "cdecl" (rparams: rawptr) -> rawptr {
         params := cast(^start_info(T, S))(rparams);
         context = params.ctx;
+        context.thread_id = os.current_thread_id();
         params.output^ = params.start(params.data);
         return params.output;
     }
