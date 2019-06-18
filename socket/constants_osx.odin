@@ -12,5 +12,11 @@ EAGAIN  :: 35;
 
 options :: enum i32 {
     REUSEADDR = 0x0004,
-    RCVBUF = 0x1002, // TODO: find windows and linux values
+    REUSEPORT = 0x0200,
+    RCVBUF = 0x1002,
+    RCVLOWAT = 0x1004,
+    RCVTIMEO = 0x1006,
+    SNDBUF = 0x1001,
+    SNDLOWAT = 0x1003,
+    SNDTIMEO = 0x1005,
 }

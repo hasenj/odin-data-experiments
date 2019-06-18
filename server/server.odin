@@ -2,15 +2,67 @@ package server
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "../socket"
 import "../thread"
 
+Request_Buffer :: struct {
+    buffer: [dynamic]byte,
+    cursor: int,
+    header_end: int,
+    header: HTTP_Request,
+}
+
+recv_http_header :: proc(using r: ^Request_Buffer, s: socket.handle) -> bool {
+    for {
+        count, err := socket.recv(s, buffer[cursor:]);
+        if err != 0 {
+            return false;
+        }
+        if count == 0 {
+            return false;
+        }
+        prev := cursor;
+        cursor += count;
+        // fmt.println("recv: ", count);
+        // fmt.println(buffer[:cursor]);
+        end_token :: "\r\n\r\n";
+        // TODO: this has a logical bug, if the end token gets split into two recv chunks we will never find it!
+        index := strings.index(string(buffer[prev:cursor]), end_token);
+        // fmt.println("find index:", index);
+        if index != -1 {
+            header_end = prev + index + len(end_token);
+            return true;
+        }
+        if cursor >= len(buffer) {
+            return false; // could not fit request header in 4kb
+        }
+    }
+    return false;
+}
+
 respond :: proc(s: socket.handle) -> int {
     // fmt.println("started thread to respond");
+    defer socket.close(s);
 
-	// header_bytes := recv_http_header(s);
-	// request := parse_http_request(header_bytes);
-	// fmt.println(request);
+    // TODO: set this up!!
+    // socket.set_options(s, .RECVTIMEO, 100)
+
+    // get the data
+    buffer: Request_Buffer;
+    buffer.buffer = make([dynamic]byte, 4 * 1024);
+    if !recv_http_header(&buffer, s) {
+        fmt.println("recieve header failed");
+        return 1;
+    }
+    ok: bool;
+    buffer.header, ok = parse_http_request(string(buffer.buffer[:buffer.header_end]));
+    if !ok {
+        fmt.println("http parse failed");
+        return 1;
+    }
+
+	fmt.println(buffer.header);
 
 	socket.sendall(s, cast([]byte)("HTTP/1.1 200 OK\n" +
     "Content-Length: 16\n" + // HACK! hard-coded!
@@ -18,7 +70,6 @@ respond :: proc(s: socket.handle) -> int {
     "\n" +
     "Hello from odin!"));
     try("socket-shutdown", socket.shutdown(s, .RDWR));
-    socket.close(s);
 	return 0;
 }
 

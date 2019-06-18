@@ -135,8 +135,8 @@ sendall :: proc(fd: handle, buffer: []byte) -> os.Errno {
 }
 
 // returns bytes read and socket state. errors ignored for now!!
-recv :: proc(fd: handle, buffer: []byte) -> (i32, os.Errno) {
-    return _or_error(_recv(fd, &buffer[0], uint(len(buffer)), 0));
+recv :: proc(fd: handle, buffer: []byte) -> (int, os.Errno) {
+    return _or_error(int(_recv(fd, &buffer[0], uint(len(buffer)), 0)));
 }
 
 shutdown :: proc(fd: handle, how: shut) -> os.Errno {

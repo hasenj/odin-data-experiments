@@ -35,34 +35,45 @@ Text_Iterator :: struct {
     index: int,
 }
 
-string_slice :: proc(text: string, start: int, len: int) -> string {
-    return transmute(string) mem.Raw_String {
-        data = &text[start], len = len
-    };
-}
-
-itr_get_word :: proc(itr: ^Text_Iterator) -> string {
-    start := itr.index;
-    loop: for ;itr.index < len(itr.text); itr.index += 1 {
-        switch itr.text[itr.index] {
+itr_get_word :: proc(using itr: ^Text_Iterator) -> string {
+    start := index;
+    end := start;
+    loop: for ; index < len(text); index += 1 {
+        switch text[index] {
             case ' ', '\n':
+                end = index;
+                break loop;
+            case '\r':
+                end = index;
+                if index + 1 < len(text) && text[index + 1] == '\n' {
+                    index += 1;
+                }
                 break loop;
             case:
                 continue;
         }
     }
-    return string_slice(text=itr.text, start=start, len=itr.index - start);
+    return text[start:end];
 }
 
 // reads line up to (but not including) new line char
-itr_get_line :: proc(itr: ^Text_Iterator) -> string {
-    start := itr.index;
-    loop: for ;itr.index < len(itr.text); itr.index += 1 {
-        if itr.text[itr.index] == '\n' {
+itr_get_line :: proc(using itr: ^Text_Iterator) -> string {
+    start := index;
+    end := start;
+    loop: for ;index < len(text); index += 1 {
+        if text[index] == '\n' {
+            end = index;
+            break loop;
+        }
+        else if text[index] == '\r' {
+            end = index;
+            if index + 1 < len(text) && text[index + 1] == '\n' {
+                index += 1;
+            }
             break loop;
         }
     }
-    return string_slice(text=itr.text, start=start, len=itr.index - start);
+    return text[start:end];
 }
 
 itr_step :: proc(itr: ^Text_Iterator) -> byte {
@@ -84,6 +95,20 @@ char_to_lower_case :: proc(c: byte) -> byte {
     } else {
         return c;
     }
+}
+
+itr_consume_newline :: proc(itr: ^Text_Iterator) -> bool {
+    c1 := itr_step(itr);
+    if c1 == '\n' {
+        return true;
+    }
+    if c1 == '\r' {
+        c2 := itr_step(itr);
+        if c2 == '\n' {
+            return true;
+        }
+    }
+    return false;
 }
 
 string_iequals :: proc(str1: string, str2: string) -> bool {
@@ -140,11 +165,11 @@ parse_http_request :: proc(request: string) -> (result: HTTP_Request, success: b
         case "HTTP/1.1":
             result.version = HTTP_Version.V1_1;
         case:
-            // fmt.println("unrecognized version", version); // DEBUG
+            // fmt.println("unrecognized version", version, cast([]byte)version); // DEBUG
             return result, false;
     }
 
-    if (itr_step(&itr) != '\n') {
+    if (!itr_consume_newline(&itr)) {
         return result, false;
     }
 

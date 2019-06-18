@@ -6,8 +6,9 @@ address_family :: enum i32 {
 }
 
 options :: enum i32 {
-    REUSEADDR = 0x0004,
-    RCVBUF = 0x1002, // TODO: verify this value on linux!
+    REUSEADDR = 2,
+    RCVBUF = 8,
+    SO_RCVTIMEO = 20,
 }
 
 MSG_NOSIGNAL :: 0x4000;
