@@ -3,6 +3,8 @@ package server
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:time"
+import "core:sync"
 import "../socket"
 import "../thread"
 
@@ -12,6 +14,8 @@ Request_Buffer :: struct {
     header_end: int,
     header: HTTP_Request,
 }
+
+concurrent_count := 0;
 
 recv_http_header :: proc(using r: ^Request_Buffer, s: socket.handle) -> bool {
     for {
@@ -42,8 +46,20 @@ recv_http_header :: proc(using r: ^Request_Buffer, s: socket.handle) -> bool {
 }
 
 respond :: proc(s: socket.handle) -> int {
+    t1 := time.now_monotonic(); // osx only!!
+
+    sync.atomic_add(&concurrent_count, 1, .Relaxed);
+    fmt.println("concurrent_count:", concurrent_count);
     // fmt.println("started thread to respond");
-    defer socket.close(s);
+    defer {
+        socket.close(s);
+        sync.atomic_sub(&concurrent_count, 1, .Relaxed);
+        t2 := time.now_monotonic();
+        dur := time.diff(t1, t2);
+        fmt.println("response time:", dur/1000, "us");
+    }
+
+    os.nanosleep(1000);
 
     // TODO: set this up!!
     // socket.set_options(s, .RECVTIMEO, 100)
@@ -93,6 +109,8 @@ must :: proc(a: $T, b: os.Errno) -> T {
 
 start :: proc(port: u16) -> int {
 	fmt.println("Starting server on port", port);
+
+    time.debug_timebase_info();
 
 	sock := must(socket.socket());
     socket.set_option(sock, .REUSEADDR, 1);
