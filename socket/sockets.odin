@@ -148,6 +148,7 @@ close :: proc(fd: handle) {
 }
 
 set_option_i32 :: proc(fd: handle, option_name: options, val: i32) -> os.Errno {
+    val := val;
     return _error_if(setsockopt(fd, .SOCKET, option_name, &val, size_of(val)));
 }
 
