@@ -12,6 +12,7 @@ options :: enum i32 {
 }
 
 MSG_NOSIGNAL :: 0x4000;
+MSG_DONTWAIT ::  0x40;
 
 EWOULDBLOCK :: 11;
 EAGAIN  :: 11;

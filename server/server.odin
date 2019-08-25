@@ -8,86 +8,68 @@ import "core:sync"
 import "../socket"
 import "../thread"
 
-Request_Buffer :: struct {
-    buffer: [dynamic]byte,
-    cursor: int,
-    header_end: int,
-    header: HTTP_Request,
+Server :: struct {
+	socket: socket.handle,
+    startedAt: time.Time,
+    queue: [dynamic]^ClientConnection,
+    connectionsCount: int,
+    aio: aioList,
 }
 
-concurrent_count := 0;
 
-recv_http_header :: proc(using r: ^Request_Buffer, s: socket.handle) -> bool {
-    for {
-        count, err := socket.recv(s, buffer[cursor:]);
-        if err != 0 {
-            return false;
-        }
-        if count == 0 {
-            return false;
-        }
-        prev := cursor;
-        cursor += count;
-        // fmt.println("recv: ", count);
-        // fmt.println(buffer[:cursor]);
-        end_token :: "\r\n\r\n";
-        // TODO: this has a logical bug, if the end token gets split into two recv chunks we will never find it!
-        index := strings.index(string(buffer[prev:cursor]), end_token);
-        // fmt.println("find index:", index);
-        if index != -1 {
-            header_end = prev + index + len(end_token);
-            return true;
-        }
-        if cursor >= len(buffer) {
-            return false; // could not fit request header in 4kb
-        }
-    }
-    return false;
+ClientConnection :: struct {
+    server: ^Server,
+	socket: socket.handle,
+    startedAt: time.Time,
+	incoming: [dynamic]byte,
+	incomingCursor: int,
+	header_end: int,
+	header: HTTP_Request,
+    header_valid: bool,
+
+	outgoing: [dynamic]byte,
+	outgoingCursor: int,
+
+    processingDone: bool,
 }
 
-respond :: proc(s: socket.handle) -> int {
-    t1 := time.now_monotonic(); // osx only!!
-
-    sync.atomic_add(&concurrent_count, 1, .Relaxed);
-    fmt.println("concurrent_count:", concurrent_count);
-    // fmt.println("started thread to respond");
-    defer {
-        socket.close(s);
-        sync.atomic_sub(&concurrent_count, 1, .Relaxed);
-        t2 := time.now_monotonic();
-        dur := time.diff(t1, t2);
-        fmt.println("response time:", dur/1000, "us");
+RemoveConnection :: proc(server: ^Server, conn: ^ClientConnection) {
+    // maybe we should also put the index into the conn?
+    for c, index in server.queue {
+        if c == conn {
+            unordered_remove(&server.queue, index);
+            break;
+        }
     }
+    delete(conn.incoming);
+    delete(conn.outgoing);
+    aioRemoveReading(&conn.server.aio, conn.socket);
+    aioRemoveWriting(&conn.server.aio, conn.socket);
 
-    os.nanosleep(1000);
+    socket.shutdown(conn.socket, .RDWR);
+    socket.close(conn.socket);
 
-    // TODO: set this up!!
-    // socket.set_options(s, .RECVTIMEO, 100)
+    sync.atomic_sub(&conn.server.connectionsCount, 1, .Relaxed);
 
-    // get the data
-    buffer: Request_Buffer;
-    buffer.buffer = make([dynamic]byte, 4 * 1024);
-    if !recv_http_header(&buffer, s) {
-        fmt.println("recieve header failed");
-        return 1;
-    }
-    ok: bool;
-    buffer.header, ok = parse_http_request(string(buffer.buffer[:buffer.header_end]));
-    if !ok {
-        fmt.println("http parse failed");
-        return 1;
-    }
-
-	fmt.println(buffer.header);
-
-	socket.sendall(s, cast([]byte)("HTTP/1.1 200 OK\n" +
-    "Content-Length: 16\n" + // HACK! hard-coded!
-    "Connection: close\n" +
-    "\n" +
-    "Hello from odin!"));
-    try("socket-shutdown", socket.shutdown(s, .RDWR));
-	return 0;
+    // this should be everything needed to remove it and clean the memory!
+    // if we forgot anything here there could be a memory leak!
 }
+
+
+IsHeaderReceived :: proc(using conn: ^ClientConnection) -> bool {
+	end_token :: "\r\n\r\n";
+	index := strings.index(string(incoming[:incomingCursor]), end_token);
+	if index != -1 {
+		header_end = index + len(end_token);
+		return true;
+	}
+	return false;
+}
+
+ParseHeader :: proc(using conn: ^ClientConnection) {
+    header, header_valid = parse_http_request(string(conn.incoming[:conn.incomingCursor]));
+}
+
 
 try :: proc(msg: string, e: os.Errno) {
     if e != 0 {
@@ -120,15 +102,87 @@ start :: proc(port: u16) -> int {
 
     socket.listen(sock, 10000);
 
-    for {
-        client_addr: socket.address;
-        client_sock, err := socket.accept(sock, &client_addr);
+    server := Server {
+        socket = sock,
+        startedAt = time.now_monotonic(),
+    };
+    reserve(&server.queue, 512);
+
+    aioInit(&server.aio);
+    aioAddReading(&server.aio, sock, &server);
+
+    frameAccept :: proc(sock: socket.handle, udata: rawptr) {
+        server := cast(^Server) udata;
+        assert(server.socket == sock);
+        clientAddr: socket.address;
+        client_sock, err := socket.accept(sock, &clientAddr);
         if err != 0 {
-            fmt.println("error acceping connection", os.strerror(err));
-            continue;
+            fmt.println("accept:", os.strerror(err));
+            return;
         }
-        // fmt.println("accepted connection!!");
-        thread.detach(thread.go(respond, client_sock));
+        conn := new(ClientConnection); // in the future, we can make a pool or something
+        conn.server = server;
+        conn.socket = client_sock;
+        conn.incoming = make([dynamic]byte, 4 * 1024);
+        conn.startedAt = time.now_monotonic();
+
+        append(&server.queue, conn);
+        aioAddReading(&server.aio, client_sock, conn);
+
+        sync.atomic_add(&server.connectionsCount, 1, .Relaxed);
+    }
+
+    sever_socket := sock;
+
+    frameRead :: proc(sock: socket.handle, udata: rawptr) {
+        conn := cast(^ClientConnection) udata;
+        assert(conn.socket == sock);
+        received, err := socket.recv(conn.socket, conn.incoming[conn.incomingCursor:]);
+        if err != 0 {
+            // assume socket is closed or invalid, etc.
+            RemoveConnection(conn.server, conn);
+        }
+        conn.incomingCursor += received;
+    }
+
+    frameWrite :: proc(sock: socket.handle, udata: rawptr) {
+        conn := cast(^ClientConnection) udata;
+        assert(conn.socket == sock);
+        buf := conn.outgoing[conn.outgoingCursor:];
+        if len(buf) > 0 {
+            sent, err := socket.send(conn.socket, buf);
+            if err != 0 {
+                // assume socket is closed or invalid, etc.
+                RemoveConnection(conn.server, conn);
+            }
+            conn.outgoingCursor += int(sent);
+        } else {
+            if conn.processingDone {
+                RemoveConnection(conn.server, conn);
+            }
+        }
+    }
+
+    for {
+        aioFrame(list = &server.aio, serverSocket = server.socket, acceptFn = frameAccept, readFn = frameRead, writeFn = frameWrite);
+        // first, run the IO process
+        // once IO is completed, do the processing!
+        for conn in server.queue {
+            if IsHeaderReceived(conn) {
+                ParseHeader(conn);
+                // for now there isn't any real processing once we parse the header, so let's not pretend otherwise
+                content := "hello from odin with queues!!";
+                conn.outgoing = make([dynamic]byte, 1024);
+                b := strings.builder_from_slice(conn.outgoing[:]);
+                fmt.sbprint(&b, "HTTP/1.1 200 OK\n");
+                fmt.sbprintf(&b, "Content-Length: %d\n", len(content));
+                fmt.sbprint(&b, "Connection: close\n");
+                fmt.sbprint(&b, "\n");
+                fmt.sbprint(&b, content);
+                aioAddWriting(&server.aio, conn.socket, conn);
+                conn.processingDone = true; // shut down connection once everything is written
+            }
+        }
     }
 
 	return 0;

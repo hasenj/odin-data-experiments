@@ -11,8 +11,5 @@ options :: enum i32 {
     RCVBUF = 0x1002, // TODO: find windows and linux values
 }
 
-// not present in windows but this should be harmless I think?
-MSG_NOSIGNAL :: 0;
-
 EWOULDBLOCK :: 11;
 EAGAIN  :: 11;

@@ -6,6 +6,7 @@ address_family :: enum i32 {
 }
 
 MSG_NOSIGNAL :: 0x20000;
+MSG_DONTWAIT ::  0x80;
 
 EWOULDBLOCK :: 35;
 EAGAIN  :: 35;

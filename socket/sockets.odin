@@ -116,7 +116,11 @@ accept :: proc(fd: handle, addr: ^$T) -> (handle, os.Errno) {
 }
 
 send_bytes :: proc(fd: handle, buffer: []byte) -> (i32, os.Errno) {
-    return _or_error(_send(fd, &buffer[0], uint(len(buffer)), MSG_NOSIGNAL));
+    sent := _send(fd, &buffer[0], uint(len(buffer)), MSG_NOSIGNAL);
+    if sent == -1 {
+        return 0, os.get_last_error();
+    }
+    return sent, 0;
 }
 
 send :: proc{send_bytes};
