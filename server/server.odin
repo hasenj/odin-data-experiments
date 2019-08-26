@@ -13,7 +13,9 @@ Server :: struct {
     startedAt: time.Time,
     queue: [dynamic]^ClientConnection,
     connectionsCount: int,
+    maxConcurrentCount: int,
     aio: aioList,
+    frames: int, // main loop iterations count
 }
 
 
@@ -37,8 +39,9 @@ ClientConnection :: struct {
 }
 
 RemoveConnection :: proc(server: ^Server, index: int) {
+    server.connectionsCount -= 1;
     conn := server.queue[index];
-    // fmt.println("removing connection:", conn.socket);
+    // fmt.printf("removing connection: %d at %d \n\n", conn.socket, index);
     unordered_remove(&server.queue, index);
     if cap(conn.incoming) > 0 {
         // fmt.println("deleting incoming buffer");
@@ -53,8 +56,6 @@ RemoveConnection :: proc(server: ^Server, index: int) {
     aioRemoveWriting(&conn.server.aio, conn.socket, conn);
     socket.shutdown(conn.socket, .RDWR);
     socket.close(conn.socket);
-
-    sync.atomic_sub(&conn.server.connectionsCount, 1, .Relaxed);
 
     free(conn);
 
@@ -137,7 +138,10 @@ start :: proc(port: u16) -> int {
         append(&server.queue, conn);
         aioAddReading(&server.aio, client_sock, conn);
 
-        sync.atomic_add(&server.connectionsCount, 1, .Relaxed);
+        server.connectionsCount += 1;
+        if server.connectionsCount > server.maxConcurrentCount {
+            server.maxConcurrentCount = server.connectionsCount;
+        }
     }
 
     sever_socket := sock;
@@ -150,6 +154,10 @@ start :: proc(port: u16) -> int {
         if err != 0 {
             fmt.printf("recv: %s\n", os.strerror(err));
             // assume socket is closed or invalid, etc.
+            conn.hasIOError = true;
+        }
+        if received == 0 {
+            // fmt.println("recv: 0");
             conn.hasIOError = true;
         }
         conn.incomingCursor += received;
@@ -166,6 +174,9 @@ start :: proc(port: u16) -> int {
                 // assume socket is closed or invalid, etc.
                 conn.hasIOError = true;
             }
+            if sent == 0 {
+                conn.hasIOError = true;
+            }
             conn.outgoingCursor += int(sent);
             if conn.processingDone {
                 conn.isIOComplete = true;
@@ -173,7 +184,14 @@ start :: proc(port: u16) -> int {
         }
     }
 
+    framePrintStats :: proc(server: ^Server) {
+        if server.frames % 10 == 0 {
+            fmt.printf("Connections: %d \t maxConnection: %d                    \r", server.connectionsCount, server.maxConcurrentCount);
+        }
+    }
+
     for {
+        server.frames += 1;
         // fmt.println("==================== frame start ====================");
         aioFrame(list = &server.aio, serverSocket = server.socket, acceptFn = frameAccept, readFn = frameRead, writeFn = frameWrite);
         // first, run the IO process
@@ -182,6 +200,7 @@ start :: proc(port: u16) -> int {
             if IsHeaderReceived(conn) {
                 ParseHeader(conn);
                 // for now there isn't any real processing once we parse the header, so let's not pretend otherwise
+                // fmt.printf("Method: %s from socket %d \t\t\t\t\n", conn.header.method, conn.socket);
                 content := "hello from odin with queues!!";
                 conn.outgoing = make([dynamic]byte, 1024);
                 b := strings.builder_from_slice(conn.outgoing[:]);
@@ -197,6 +216,7 @@ start :: proc(port: u16) -> int {
                 RemoveConnection(&server, index);
             }
         }
+        framePrintStats(&server);
     }
 
 	return 0;

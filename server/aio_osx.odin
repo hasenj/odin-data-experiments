@@ -136,10 +136,7 @@ aioHandler :: proc(sock: socket.handle, udata: rawptr);
 
 aioFrame :: proc(list: ^aioList, serverSocket: socket.handle, acceptFn: aioHandler, readFn: aioHandler, writeFn: aioHandler) {
     events: [64]KEvent;
-    timeout := os.TimeSpec {
-        tv_nsec = 1000_000 // 1ms
-    };
-    count := kq_list(list.kq, events[:], &timeout);
+    count := kq_list(list.kq, events[:], nil);
     if count < 0 {
         // panic?!
         fmt.println("kevent failed!!!!!");
@@ -154,6 +151,8 @@ aioFrame :: proc(list: ^aioList, serverSocket: socket.handle, acceptFn: aioHandl
             readFn(socket.handle(ev.ident), ev.udata);
         } else if ev.filter == .WRITE {
             writeFn(socket.handle(ev.ident), ev.udata);
+        } else {
+            fmt.println("unknown event\n -->", ev);
         }
     }
 }
