@@ -112,20 +112,22 @@ aioAddWriting :: proc(list: ^aioList, sock: socket.handle, udata: rawptr) -> i32
     return kq_change(list.kq, &kevSet);
 }
 
-aioRemoveReading :: proc(list: ^aioList, sock: socket.handle) -> i32 {
+aioRemoveReading :: proc(list: ^aioList, sock: socket.handle, udata: rawptr) -> i32 {
     kevSet := KEvent {
         ident = KQIdent(sock),
         filter = .READ,
-        flags = EV_DELETE,
+        flags = EV_DISABLE,
+        udata = udata,
     };
     return kq_change(list.kq, &kevSet);
 }
 
-aioRemoveWriting :: proc(list: ^aioList, sock: socket.handle) -> i32 {
+aioRemoveWriting :: proc(list: ^aioList, sock: socket.handle, udata: rawptr) -> i32 {
     kevSet := KEvent {
         ident = KQIdent(sock),
         filter = .WRITE,
-        flags = EV_DELETE,
+        flags = EV_DISABLE,
+        udata = udata,
     };
     return kq_change(list.kq, &kevSet);
 }

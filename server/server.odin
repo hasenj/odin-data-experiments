@@ -31,25 +31,32 @@ ClientConnection :: struct {
 	outgoingCursor: int,
 
     processingDone: bool,
+
+    hasIOError: bool,
+    isIOComplete: bool,
 }
 
-RemoveConnection :: proc(server: ^Server, conn: ^ClientConnection) {
-    // maybe we should also put the index into the conn?
-    for c, index in server.queue {
-        if c == conn {
-            unordered_remove(&server.queue, index);
-            break;
-        }
+RemoveConnection :: proc(server: ^Server, index: int) {
+    conn := server.queue[index];
+    // fmt.println("removing connection:", conn.socket);
+    unordered_remove(&server.queue, index);
+    if cap(conn.incoming) > 0 {
+        // fmt.println("deleting incoming buffer");
+        delete(conn.incoming);
     }
-    delete(conn.incoming);
-    delete(conn.outgoing);
-    aioRemoveReading(&conn.server.aio, conn.socket);
-    aioRemoveWriting(&conn.server.aio, conn.socket);
-
+    if cap(conn.outgoing) > 0 {
+        // fmt.println("deleting outgoing buffer");
+        delete(conn.outgoing);
+    }
+    // fmt.println("closing socket");
+    aioRemoveReading(&conn.server.aio, conn.socket, conn);
+    aioRemoveWriting(&conn.server.aio, conn.socket, conn);
     socket.shutdown(conn.socket, .RDWR);
     socket.close(conn.socket);
 
     sync.atomic_sub(&conn.server.connectionsCount, 1, .Relaxed);
+
+    free(conn);
 
     // this should be everything needed to remove it and clean the memory!
     // if we forgot anything here there could be a memory leak!
@@ -120,6 +127,7 @@ start :: proc(port: u16) -> int {
             fmt.println("accept:", os.strerror(err));
             return;
         }
+        // fmt.println("accepting connection:", client_sock);
         conn := new(ClientConnection); // in the future, we can make a pool or something
         conn.server = server;
         conn.socket = client_sock;
@@ -135,12 +143,14 @@ start :: proc(port: u16) -> int {
     sever_socket := sock;
 
     frameRead :: proc(sock: socket.handle, udata: rawptr) {
+        // fmt.println("frameRead:", sock, udata);
         conn := cast(^ClientConnection) udata;
         assert(conn.socket == sock);
         received, err := socket.recv(conn.socket, conn.incoming[conn.incomingCursor:]);
         if err != 0 {
+            fmt.printf("recv: %s\n", os.strerror(err));
             // assume socket is closed or invalid, etc.
-            RemoveConnection(conn.server, conn);
+            conn.hasIOError = true;
         }
         conn.incomingCursor += received;
     }
@@ -152,22 +162,23 @@ start :: proc(port: u16) -> int {
         if len(buf) > 0 {
             sent, err := socket.send(conn.socket, buf);
             if err != 0 {
+                fmt.printf("send: %s\n", os.strerror(err));
                 // assume socket is closed or invalid, etc.
-                RemoveConnection(conn.server, conn);
+                conn.hasIOError = true;
             }
             conn.outgoingCursor += int(sent);
-        } else {
             if conn.processingDone {
-                RemoveConnection(conn.server, conn);
+                conn.isIOComplete = true;
             }
         }
     }
 
     for {
+        // fmt.println("==================== frame start ====================");
         aioFrame(list = &server.aio, serverSocket = server.socket, acceptFn = frameAccept, readFn = frameRead, writeFn = frameWrite);
         // first, run the IO process
         // once IO is completed, do the processing!
-        for conn in server.queue {
+        for conn, index in server.queue {
             if IsHeaderReceived(conn) {
                 ParseHeader(conn);
                 // for now there isn't any real processing once we parse the header, so let's not pretend otherwise
@@ -181,6 +192,9 @@ start :: proc(port: u16) -> int {
                 fmt.sbprint(&b, content);
                 aioAddWriting(&server.aio, conn.socket, conn);
                 conn.processingDone = true; // shut down connection once everything is written
+            }
+            if conn.hasIOError || conn.isIOComplete {
+                RemoveConnection(&server, index);
             }
         }
     }
