@@ -34,6 +34,7 @@ ClientConnection :: struct {
 
     processingDone: bool,
 
+    remoteClosed: bool,
     hasIOError: bool,
     isIOComplete: bool,
 }
@@ -155,10 +156,12 @@ start :: proc(port: u16) -> int {
             fmt.printf("recv: %s\n", os.strerror(err));
             // assume socket is closed or invalid, etc.
             conn.hasIOError = true;
+            return;
         }
         if received == 0 {
             // fmt.println("recv: 0");
-            conn.hasIOError = true;
+            conn.remoteClosed = true;
+            return;
         }
         conn.incomingCursor += received;
     }
@@ -173,9 +176,11 @@ start :: proc(port: u16) -> int {
                 fmt.printf("send: %s\n", os.strerror(err));
                 // assume socket is closed or invalid, etc.
                 conn.hasIOError = true;
+                return;
             }
             if sent == 0 {
-                conn.hasIOError = true;
+                conn.remoteClosed = true;
+                return;
             }
             conn.outgoingCursor += int(sent);
             if conn.processingDone {
@@ -212,7 +217,7 @@ start :: proc(port: u16) -> int {
                 aioAddWriting(&server.aio, conn.socket, conn);
                 conn.processingDone = true; // shut down connection once everything is written
             }
-            if conn.hasIOError || conn.isIOComplete {
+            if conn.hasIOError || conn.remoteClosed || conn.isIOComplete {
                 RemoveConnection(&server, index);
             }
         }
