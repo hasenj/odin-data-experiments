@@ -40,7 +40,14 @@ SampleObject :: struct {
     birth_month: int,
 }
 
-main :: proc() {
+
+write_list :: proc(list: []$T, file: os.Handle) {
+}
+
+write_string :: proc(text: string, file: os.Handle) {
+}
+
+term_main :: proc() {
     person: SampleObject;
     person.name = "hasen";
     fmt.printf("address of our obect: %d\n", cast(rawptr)(&person));
@@ -86,24 +93,93 @@ edit_object :: proc(obj: any) {
         count, err := os.read(context.stdin, input);
         if err == 0 && count > 1 {
             userInput := string(input[:count-1]);
-            fmt.println("You want to assign", userInput, "to", name);
-            switch t in type.variant {
-                case runtime.Type_Info_Integer:
-                    // it = integer type
-                    it := getIntType(t.signed, type.size);
-                    switch it {
-                        case .i64:
-                            (cast(^i64)fieldPtr)^ = strconv.parse_i64(userInput);
-                        case:
-                            fmt.println("Not supporting:", it);
-                    }
-                case runtime.Type_Info_String:
-                    v:= cast(^string)fieldPtr;
-                    v^ = strings.clone(userInput);
-                case:
-                fmt.println("we don't know how to assigned to", t);
-            }
+            // fmt.println("You want to assign", userInput, "to", name);
+            dynamically_assign(fieldPtr, type, userInput);
         }
         fmt.println("object now is:", obj);
     }
 }
+
+dynamically_assign :: proc(ptr: rawptr, type: ^runtime.Type_Info, userInput: string) {
+    switch t in type.variant {
+        case runtime.Type_Info_Integer:
+        // it = integer type
+        it := getIntType(t.signed, type.size);
+        switch it {
+            case .i64:
+            (cast(^i64)ptr)^ = strconv.parse_i64(userInput);
+            case:
+            fmt.println("Not supporting:", it);
+        }
+        case runtime.Type_Info_String:
+        v:= cast(^string)ptr;
+        v^ = strings.clone(userInput);
+        case:
+        fmt.println("we don't know how to assigned to", t);
+    }
+}
+
+
+// -------------------------- TEST DATA ----------------------------------------
+// -----------------------------------------------------------------------------
+
+
+// Note: next step, make a structure that nests another structure and make it possible to serialize/deserialize
+
+BlogRepo :: struct {
+    users: [dynamic]User,
+    user_auths: [dynamic]UserAuth,
+    user_sessions: [dynamic]UserSession,
+    posts: [dynamic]Post,
+    comments: [dynamic]Comment,
+}
+
+UserType :: enum u8 {
+    Anon = 0,
+    User = 1,
+    Admin = 2,
+}
+
+User :: struct {
+    id: int,
+    screen_name: string,
+    type: UserType,
+    email: string,
+    bio: string,
+}
+
+UserAuth :: struct {
+    user: ^User,
+    hashed_password: string,
+    email_confirmed: bool,
+    email_token: string, // if email needs confirmation
+}
+
+UserSession :: struct {
+    user: ^User,
+    session_token: string,
+}
+
+Post :: struct {
+    id: int,
+    posted_by: ^User,
+    title: string,
+    content: string, // could be large? do we care? for now, no!
+    time: string,
+}
+
+PostTag :: struct {
+    id: int,
+    tag: string,
+    post: ^Post,
+}
+
+
+Comment :: struct {
+    id: int,
+    posted_by: ^User,
+    posted_on: ^Post,
+    time: string,
+    parent_comment: ^Comment, // fragility point: parent comment must have a lower id, or else we have a problem! (it will be deserialized as nil)
+}
+
