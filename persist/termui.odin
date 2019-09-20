@@ -7,30 +7,6 @@ import "core:mem"
 import "core:strings"
 import "core:strconv"
 
-IntType :: enum {
-    unknown,
-    i64,
-    i32,
-    i16,
-    i8,
-    u64,
-    u32,
-    u16,
-    u8,
-}
-
-getIntType :: proc(signed: bool, size: int) -> IntType {
-    if signed && size == 8 do return .i64;
-    if signed && size == 4 do return .i32;
-    if signed && size == 2 do return .i16;
-    if signed && size == 1 do return .i8;
-    if !signed && size == 8 do return .u64;
-    if !signed && size == 4 do return .u32;
-    if !signed && size == 2 do return .u16;
-    if !signed && size == 1 do return .u8;
-    return .unknown;
-}
-
 // this is just a demo for letting a user edit an object via the console!
 
 SampleObject :: struct {
@@ -88,34 +64,28 @@ edit_object :: proc(obj: any) {
         type := struct_info.types[index];
         offset := struct_info.offsets[index];
         fieldPtr := rawptr(uintptr(ptr) + offset);
+        fieldValue := any{fieldPtr, type.id};
         // fmt.println("Field:", name, "\tType:", type);
         fmt.printf("%s> ", name);
         count, err := os.read(context.stdin, input);
         if err == 0 && count > 1 {
             userInput := string(input[:count-1]);
             // fmt.println("You want to assign", userInput, "to", name);
-            dynamically_assign(fieldPtr, type, userInput);
+            dynamically_assign(fieldValue, userInput);
         }
         fmt.println("object now is:", obj);
     }
 }
 
-dynamically_assign :: proc(ptr: rawptr, type: ^runtime.Type_Info, userInput: string) {
-    switch t in type.variant {
-        case runtime.Type_Info_Integer:
-        // it = integer type
-        it := getIntType(t.signed, type.size);
-        switch it {
-            case .i64:
-            (cast(^i64)ptr)^ = strconv.parse_i64(userInput);
-            case:
-            fmt.println("Not supporting:", it);
-        }
-        case runtime.Type_Info_String:
-        v:= cast(^string)ptr;
-        v^ = strings.clone(userInput);
-        case:
-        fmt.println("we don't know how to assigned to", t);
+dynamically_assign :: proc(obj: any, userInput: string) {
+    ptr := obj.data;
+    switch it in obj {
+        case int: (cast(^int)ptr)^ = strconv.parse_int(userInput);
+        case uint: (cast(^uint)ptr)^ = strconv.parse_uint(userInput);
+        case i64: (cast(^i64)ptr)^ = strconv.parse_i64(userInput);
+        case u64: (cast(^u64)ptr)^ = strconv.parse_u64(userInput);
+        case string: (cast(^string)ptr)^ = strings.clone(userInput);
+        case: fmt.println("we don't know how to assigned to", obj);
     }
 }
 
