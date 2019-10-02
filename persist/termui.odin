@@ -29,6 +29,43 @@ term_main :: proc() {
     fmt.printf("address of our obect: %d\n", cast(rawptr)(&person));
     edit_object(&person);
     fmt.println("object now is:", person);
+    buf := make([dynamic]byte);
+    encode_object(&buf, person);
+    fmt.println("Encoded to bytes:", buf);
+}
+
+Struct_Info :: struct {
+    ptr: rawptr,
+    info: runtime.Type_Info_Struct,
+    type_name: string,
+}
+
+get_struct_info :: proc(obj: any) -> (Struct_Info, bool) {
+    data: Struct_Info;
+    data.ptr = obj.data;
+
+    // generic typeinfo to use for looping
+    info := type_info_of(obj.id);
+
+    for {
+        // fmt.println("type_info:", info.variant);
+        switch v in info.variant {
+            case runtime.Type_Info_Pointer:
+                info = v.elem;
+                data.ptr = (cast(^rawptr)data.ptr)^; // ptr was a pointer to a pointer; go inside!
+            case runtime.Type_Info_Named:
+                data.type_name = v.name;
+                info = v.base;
+            case runtime.Type_Info_Struct:
+                data.info = v;
+                return data, true;
+            case:
+                fmt.println("while looking for struct info, encountered an unknown variant: ", v);
+                return Struct_Info{}, false;
+        }
+    }
+    // should be unreachable
+    return Struct_Info{}, false;
 }
 
 edit_object :: proc(obj: any) {
@@ -36,28 +73,14 @@ edit_object :: proc(obj: any) {
     fmt.println("Editing object:", obj);
 
     // expect a pointer to a struct, or the struct info to be in there somewhere!
-    ptr : rawptr = obj.data;
-    info := type_info_of(obj.id);
-    struct_info: runtime.Type_Info_Struct;
-
-    findloop: for {
-        // fmt.println("type_info:", info.variant);
-        switch v in info.variant {
-            case runtime.Type_Info_Pointer:
-                info = v.elem;
-                ptr = (cast(^rawptr)ptr)^; // ptr was a pointer to a pointer; go inside!
-            case runtime.Type_Info_Named:
-                info = v.base;
-            case runtime.Type_Info_Struct:
-                struct_info = v;
-                break findloop;
-            case:
-                fmt.println("unknown variant!", v);
-                return;
-        }
+    type_data, ok := get_struct_info(obj);
+    if !ok {
+        fmt.println("not a struct");
+        return;
     }
-    // fmt.println("type:", struct_info);
-    fmt.printf("edit_object :: pointer is: %d\n", ptr);
+
+    ptr := type_data.ptr;
+    struct_info := type_data.info;
 
     input := make([]byte, 20);
     for name, index in struct_info.names {
@@ -71,24 +94,59 @@ edit_object :: proc(obj: any) {
         if err == 0 && count > 1 {
             userInput := string(input[:count-1]);
             // fmt.println("You want to assign", userInput, "to", name);
-            dynamically_assign(fieldValue, userInput);
+            assign_string(fieldValue, userInput);
         }
         fmt.println("object now is:", obj);
     }
 }
 
-dynamically_assign :: proc(obj: any, userInput: string) {
+assign_string :: proc(obj: any, input: string) {
     ptr := obj.data;
     switch it in obj {
-        case int: (cast(^int)ptr)^ = strconv.parse_int(userInput);
-        case uint: (cast(^uint)ptr)^ = strconv.parse_uint(userInput);
-        case i64: (cast(^i64)ptr)^ = strconv.parse_i64(userInput);
-        case u64: (cast(^u64)ptr)^ = strconv.parse_u64(userInput);
-        case string: (cast(^string)ptr)^ = strings.clone(userInput);
-        case: fmt.println("we don't know how to assigned to", obj);
+        case int: (cast(^int)ptr)^ = strconv.parse_int(input);
+        case uint: (cast(^uint)ptr)^ = strconv.parse_uint(input);
+        case i64: (cast(^i64)ptr)^ = strconv.parse_i64(input);
+        case u64: (cast(^u64)ptr)^ = strconv.parse_u64(input);
+        case string: (cast(^string)ptr)^ = strings.clone(input);
+        case: fmt.println("we don't know how to assigned a string to", obj);
     }
 }
 
+assign_i64 :: proc(obj: any, input: i64) {
+    ptr := obj.data;
+    switch it in obj {
+        case i64: (cast(^i64)ptr)^ = input;
+        case int: (cast(^int)ptr)^ = int(input);
+        case u64: (cast(^u64)ptr)^ = u64(input);
+        case uint: (cast(^uint)ptr)^ = uint(input);
+        case string: (cast(^string)ptr)^ = i64_to_string(input);
+        case: fmt.println("we don't know how to assigned i64 to", obj);
+    }
+}
+
+assign_u64 :: proc(obj: any, input: u64) {
+    ptr := obj.data;
+    switch it in obj {
+        case u64: (cast(^u64)ptr)^ = input;
+        case uint: (cast(^uint)ptr)^ = uint(input);
+        case i64: (cast(^i64)ptr)^ = i64(input);
+        case int: (cast(^int)ptr)^ = int(input);
+        case string: (cast(^string)ptr)^ = u64_to_string(input);
+        case: fmt.println("we don't know how to assigned u64 to", obj);
+    }
+}
+
+i64_to_string :: proc(x: i64) -> string {
+    s := strings.make_builder();
+    strings.write_i64(&s, x);
+    return strings.to_string(s);
+}
+
+u64_to_string :: proc(x: u64) -> string {
+    s := strings.make_builder();
+    strings.write_u64(&s, x);
+    return strings.to_string(s);
+}
 
 // -------------------------- TEST DATA ----------------------------------------
 // -----------------------------------------------------------------------------
