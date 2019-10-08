@@ -72,8 +72,8 @@ enc_main :: proc() {
 }
 
 // some magic values
-Markers :: enum byte {
-    Object,
+Marker :: enum byte {
+    Object = 1,
     Field,
 
     // values
@@ -97,37 +97,37 @@ encode_object :: proc(out: ^[dynamic]byte, obj: any) {
         fmt.println("not a struct");
         return;
     }
-    append(out, byte(Markers.Object));
+    append(out, byte(Marker.Object));
     encode_string(out, struct_info.type_name);
     tinfo := struct_info.info;
     for name, index in tinfo.names {
         field := get_field(struct_info.ptr, tinfo, index);
         // TODO: maybe we need a function that returns an array of 'any' for the object so that it can do things like recurse into structs (not pointers)
-        append(out, byte(Markers.Field));
+        append(out, byte(Marker.Field));
         encode_string(out, name);
         switch v in field {
             case int:
-                append(out, byte(Markers.IntValue));
+                append(out, byte(Marker.IntValue));
                 encode_i64(out, i64(v));
             case uint:
-                append(out, byte(Markers.UintValue));
+                append(out, byte(Marker.UintValue));
                 encode_u64(out, u64(v));
             case bool:
-                append(out, byte(Markers.BoolValue));
+                append(out, byte(Marker.BoolValue));
                 append(out, byte(v));
             case string:
-                append(out, byte(Markers.StringValue));
+                append(out, byte(Marker.StringValue));
                 encode_string(out, v);
             case []byte:
-                append(out, byte(Markers.StringValue));
+                append(out, byte(Marker.StringValue));
                 encode_bytes(out, v);
             case:
                 ref_id, ok := get_object_id(v);
                 if ok {
-                    append(out, byte(Markers.IntValue));
+                    append(out, byte(Marker.IntValue));
                     encode_i64(out, i64(ref_id));
                 } else {
-                    append(out, byte(Markers.NoValue)); // kind of a hack actually
+                    append(out, byte(Marker.NoValue)); // kind of a hack actually
                 }
         }
     }
@@ -187,3 +187,134 @@ encode_u64 :: proc(out: ^[dynamic]byte, v: u64) {
     append(out, ..b[:]);
 }
 
+// ---- decoding
+
+scanner :: struct(T: typeid) {
+    buffer: []T,
+    cursor: int,
+}
+
+
+AtEnd :: proc(sc: ^scanner($T)) -> bool {
+    return sc.cursor >= len(sc.buffer);
+}
+
+ReadOne :: proc(sc: ^scanner($T)) -> (out: T) {
+    if sc.cursor >= len(sc.buffer) {
+        return;
+    }
+    out = sc.buffer[sc.cursor];
+    sc.cursor += 1;
+    return;
+}
+
+ReadN :: proc(sc: ^scanner($T), count: int) -> []T {
+    start := sc.cursor;
+    end := start + count;
+    if end > len(sc.buffer) do end = len(sc.buffer);
+    sc.cursor = end;
+    return sc.buffer[start:end];
+}
+
+ReadByte :: proc(sc: ^scanner(byte)) -> byte {
+    return ReadOne(sc);
+}
+
+ReadBytes :: proc(sc: ^scanner(byte), count: int) -> []byte {
+    return ReadN(sc, count);
+}
+
+ReadMarker :: proc(sc: ^scanner(byte)) -> Marker {
+    return Marker(ReadByte(sc));
+}
+
+/*DecodeValue :: proc(sc: ^scanner(byte)) -> any {
+    // TODO
+    return nil;
+}
+*/
+
+
+DecodeObject :: proc(buf: ^[dynamic]byte, obj: any) -> bool {
+    fmt.println("DECODING: TODO!");
+    sc := scanner(byte){buffer = buf[:]};
+    b := ReadMarker(&sc);
+    if b != .Object {
+        fmt.println("DBG:", "not an object!!");
+        return false;
+    }
+    name := DecodeString(&sc);
+    fmt.println("type name:", name);
+    for !AtEnd(&sc) {
+        b := ReadMarker(&sc);
+        // boundary conditions
+        if b == .Object {
+            fmt.println("DBG:", "object boundary! it's the end!");
+            return true;
+        }
+        if b != .Field {
+            fmt.println("DBG:", "not a field! can't handle!");
+            return false;
+        }
+        // good, now let's get the field name
+        name := DecodeString(&sc);
+        fmt.println("field name:", name);
+
+        // now, decode the value!!!
+        vm := ReadMarker(&sc);
+        switch vm {
+            case .NoValue: continue;
+            case .BoolValue:
+                // TODO simplify the error handling?
+                v := ReadBool(&sc);
+                fmt.println("field value:", v);
+            case .IntValue:
+                v := ReadInt(&sc);
+                fmt.println("field value:", v);
+            case .UintValue:
+                v := ReadUint(&sc);
+                fmt.println("field value:", v);
+            case .StringValue:
+                v := DecodeString(&sc);
+                fmt.println("field value:", v);
+            case:
+                fmt.println("unknown value marker", vm);
+        }
+    }
+    return true;
+}
+
+ReadT :: proc(sc: ^scanner(byte), $T: typeid) -> T {
+    n :: size_of(T);
+    b := ReadBytes(sc, n);
+    out: T;
+    mem.copy(&out, &b[0], n);
+    fmt.printf("Read %v :: %v -> %v\n", typeid_of(T), b, out);
+    return out;
+}
+
+ReadInt :: inline proc(sc: ^scanner(byte)) -> i64 {
+    return ReadT(sc, i64);
+}
+
+ReadUint :: inline proc(sc: ^scanner(byte)) -> u64 {
+    return ReadT(sc, u64);
+}
+
+ReadBool :: inline proc(sc: ^scanner(byte)) -> bool {
+    return bool(ReadT(sc, byte));
+}
+
+DecodeString :: proc(sc: ^scanner(byte)) -> string {
+    n := ReadInt(sc);
+    buf := ReadBytes(sc, int(n));
+    out := make([]byte, n);
+    copy(out, buf);
+    return string(out);
+}
+
+AssignNamedValue :: proc(name: string, value: any, target: any) -> bool {
+    // TODO!
+    fmt.println("Assigning", value, "to field:", name);
+    return true;
+}

@@ -25,13 +25,25 @@ write_string :: proc(text: string, file: os.Handle) {
 
 term_main :: proc() {
     person: SampleObject;
-    person.name = "hasen";
-    fmt.printf("address of our obect: %d\n", cast(rawptr)(&person));
-    edit_object(&person);
-    fmt.println("object now is:", person);
+    person.name = "Hasen";
+    person.job_title = "Programmer";
+    person.birth_year = 1985;
+    person.birth_month = 5;
+    // fmt.printf("address of our object: %d\n", cast(rawptr)(&person));
+    // edit_object(&person);
+
+    fmt.println("object is:", person);
     buf := make([dynamic]byte);
     encode_object(&buf, person);
     fmt.println("Encoded to bytes:", buf);
+
+    person2: SampleObject;
+    person2.name = "something that will never be real";
+    person2.birth_year = 4332;
+    person2.birth_month = 523;
+    fmt.println("new object:", person2);
+    DecodeObject(&buf, person2);
+    fmt.println("new object after decoding from buffer", person2);
 }
 
 Struct_Info :: struct {
