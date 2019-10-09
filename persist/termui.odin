@@ -46,40 +46,6 @@ term_main :: proc() {
     fmt.println("new object after decoding from buffer", person2);
 }
 
-Struct_Info :: struct {
-    ptr: rawptr,
-    info: runtime.Type_Info_Struct,
-    type_name: string,
-}
-
-get_struct_info :: proc(obj: any) -> (Struct_Info, bool) {
-    data: Struct_Info;
-    data.ptr = obj.data;
-
-    // generic typeinfo to use for looping
-    info := type_info_of(obj.id);
-
-    for {
-        // fmt.println("type_info:", info.variant);
-        switch v in info.variant {
-            case runtime.Type_Info_Pointer:
-                info = v.elem;
-                data.ptr = (cast(^rawptr)data.ptr)^; // ptr was a pointer to a pointer; go inside!
-            case runtime.Type_Info_Named:
-                data.type_name = v.name;
-                info = v.base;
-            case runtime.Type_Info_Struct:
-                data.info = v;
-                return data, true;
-            case:
-                fmt.println("while looking for struct info, encountered an unknown variant: ", v);
-                return Struct_Info{}, false;
-        }
-    }
-    // should be unreachable
-    return Struct_Info{}, false;
-}
-
 edit_object :: proc(obj: any) {
     // for now let it just list all the fields!
     fmt.println("Editing object:", obj);
@@ -97,22 +63,20 @@ edit_object :: proc(obj: any) {
     input := make([]byte, 20);
     for name, index in struct_info.names {
         type := struct_info.types[index];
-        offset := struct_info.offsets[index];
-        fieldPtr := rawptr(uintptr(ptr) + offset);
-        fieldValue := any{fieldPtr, type.id};
+        fieldRef := GetField(ptr, struct_info, index);
         // fmt.println("Field:", name, "\tType:", type);
         fmt.printf("%s> ", name);
         count, err := os.read(context.stdin, input);
         if err == 0 && count > 1 {
             userInput := string(input[:count-1]);
             // fmt.println("You want to assign", userInput, "to", name);
-            assign_string(fieldValue, userInput);
+            assign_string(userInput, fieldRef);
         }
         fmt.println("object now is:", obj);
     }
 }
 
-assign_string :: proc(obj: any, input: string) {
+assign_string :: proc(input: string, obj: any) {
     ptr := obj.data;
     switch it in obj {
         case int: (cast(^int)ptr)^ = strconv.parse_int(input);
@@ -124,7 +88,7 @@ assign_string :: proc(obj: any, input: string) {
     }
 }
 
-assign_i64 :: proc(obj: any, input: i64) {
+assign_i64 :: proc(input: i64, obj: any) {
     ptr := obj.data;
     switch it in obj {
         case i64: (cast(^i64)ptr)^ = input;
@@ -136,7 +100,7 @@ assign_i64 :: proc(obj: any, input: i64) {
     }
 }
 
-assign_u64 :: proc(obj: any, input: u64) {
+assign_u64 :: proc(input: u64, obj: any) {
     ptr := obj.data;
     switch it in obj {
         case u64: (cast(^u64)ptr)^ = input;
@@ -147,6 +111,21 @@ assign_u64 :: proc(obj: any, input: u64) {
         case: fmt.println("we don't know how to assigned u64 to", obj);
     }
 }
+
+
+assign_b8 :: proc(input: b8, obj: any) {
+    ptr := obj.data;
+    switch it in obj {
+        case i64: (cast(^i64)ptr)^ = i64(input);
+        case int: (cast(^int)ptr)^ = int(input);
+        case u64: (cast(^u64)ptr)^ = u64(input);
+        case uint: (cast(^uint)ptr)^ = uint(input);
+        case string: (cast(^string)ptr)^ = input ? "true" : "false";
+        case: fmt.println("we don't know how to assigned b8 to", obj);
+    }
+}
+
+assign :: proc{assign_b8, assign_u64, assign_i64, assign_string};
 
 i64_to_string :: proc(x: i64) -> string {
     s := strings.make_builder();

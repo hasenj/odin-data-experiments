@@ -71,6 +71,57 @@ enc_main :: proc() {
     fmt.println(repo2);
 }
 
+Struct_Info :: struct {
+    ptr: rawptr,
+    info: runtime.Type_Info_Struct,
+    type_name: string,
+}
+
+get_struct_info :: proc(obj: any) -> (Struct_Info, bool) {
+    data: Struct_Info;
+    data.ptr = obj.data;
+
+    // generic typeinfo to use for looping
+    info := type_info_of(obj.id);
+
+    for {
+        // fmt.println("type_info:", info.variant);
+        switch v in info.variant {
+            case runtime.Type_Info_Pointer:
+                info = v.elem;
+                data.ptr = (cast(^rawptr)data.ptr)^; // ptr was a pointer to a pointer; go inside!
+            case runtime.Type_Info_Named:
+                data.type_name = v.name;
+                info = v.base;
+            case runtime.Type_Info_Struct:
+                data.info = v;
+                return data, true;
+            case:
+                fmt.println("while looking for struct info, encountered an unknown variant: ", v);
+                return Struct_Info{}, false;
+        }
+    }
+    // should be unreachable
+    return Struct_Info{}, false;
+}
+
+
+GetField :: proc(ptr: rawptr, tinfo: runtime.Type_Info_Struct, index: int) -> any {
+    type := tinfo.types[index];
+    offset := tinfo.offsets[index];
+    fieldPtr := rawptr(uintptr(ptr) + offset);
+    return any{fieldPtr, type.id};
+}
+
+GetFieldByName :: proc(ptr: rawptr, tinfo: runtime.Type_Info_Struct, name: string) -> any {
+    for fname, findex in tinfo.names {
+        if fname == name {
+            return GetField(ptr, tinfo, findex);
+        }
+    }
+    return nil;
+}
+
 // some magic values
 Marker :: enum byte {
     Object = 1,
@@ -84,13 +135,6 @@ Marker :: enum byte {
     StringValue,
 }
 
-get_field :: proc(ptr: rawptr, tinfo: runtime.Type_Info_Struct, index: int) -> any {
-    type := tinfo.types[index];
-    offset := tinfo.offsets[index];
-    fieldPtr := rawptr(uintptr(ptr) + offset);
-    return any{fieldPtr, type.id};
-}
-
 encode_object :: proc(out: ^[dynamic]byte, obj: any) {
     struct_info, ok := get_struct_info(obj);
     if !ok {
@@ -101,7 +145,7 @@ encode_object :: proc(out: ^[dynamic]byte, obj: any) {
     encode_string(out, struct_info.type_name);
     tinfo := struct_info.info;
     for name, index in tinfo.names {
-        field := get_field(struct_info.ptr, tinfo, index);
+        field := GetField(struct_info.ptr, tinfo, index);
         // TODO: maybe we need a function that returns an array of 'any' for the object so that it can do things like recurse into structs (not pointers)
         append(out, byte(Marker.Field));
         encode_string(out, name);
@@ -143,7 +187,7 @@ get_object_id :: proc(obj_: any) -> (int, bool) {
         if !ok {
             return 0, false;
         }
-        id_field := get_field(info.ptr, info.info, 0);
+        id_field := GetField(info.ptr, info.info, 0);
         switch id in id_field {
             case int:
                 return id, true;
@@ -245,6 +289,7 @@ DecodeObject :: proc(buf: ^[dynamic]byte, obj: any) -> bool {
     }
     name := DecodeString(&sc);
     fmt.println("type name:", name);
+    target, targetOk := get_struct_info(obj);
     for !AtEnd(&sc) {
         b := ReadMarker(&sc);
         // boundary conditions
@@ -260,6 +305,10 @@ DecodeObject :: proc(buf: ^[dynamic]byte, obj: any) -> bool {
         name := DecodeString(&sc);
         fmt.println("field name:", name);
 
+        // find the field
+        field: any;
+        if targetOk do field = GetFieldByName(target.ptr, target.info, name);
+
         // now, decode the value!!!
         vm := ReadMarker(&sc);
         switch vm {
@@ -268,15 +317,19 @@ DecodeObject :: proc(buf: ^[dynamic]byte, obj: any) -> bool {
                 // TODO simplify the error handling?
                 v := ReadBool(&sc);
                 fmt.println("field value:", v);
+                if field != nil do assign_b8(v, field);
             case .IntValue:
                 v := ReadInt(&sc);
                 fmt.println("field value:", v);
+                if field != nil do assign_i64(v, field);
             case .UintValue:
                 v := ReadUint(&sc);
                 fmt.println("field value:", v);
+                if field != nil do assign_u64(v, field);
             case .StringValue:
                 v := DecodeString(&sc);
                 fmt.println("field value:", v);
+                if field != nil do assign_string(v, field);
             case:
                 fmt.println("unknown value marker", vm);
         }
@@ -301,8 +354,8 @@ ReadUint :: inline proc(sc: ^scanner(byte)) -> u64 {
     return ReadT(sc, u64);
 }
 
-ReadBool :: inline proc(sc: ^scanner(byte)) -> bool {
-    return bool(ReadT(sc, byte));
+ReadBool :: inline proc(sc: ^scanner(byte)) -> b8 {
+    return b8(ReadT(sc, byte));
 }
 
 DecodeString :: proc(sc: ^scanner(byte)) -> string {
