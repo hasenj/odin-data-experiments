@@ -83,7 +83,7 @@ DumpMemory :: proc(list: []byte) {
             end = len(list);
         }
         for j := index; j < end; j+= 1 {
-            fmt.printf("%x ", list[j]);
+            fmt.printf("%2x ", list[j]);
         }
         // in case this is the last line, append some extra space for the missing items
         if index + per_line > end {
@@ -248,6 +248,13 @@ EncodeList :: proc(out: ^WriteBuffer, list: any) {
     fmt.printf("object_marker: %v 0b%8b\n", b, transmute(byte)b);
     append(out, transmute(byte)b);
     append(out, ..(cast([]byte)(info.element_type_name)));
+
+    // write array size
+    array_size := cast(u64) info.array_size;
+    nc := uint_bytes_required(array_size); // n-count
+    append(out, nc);
+    encode_u64_dynamic(out, array_size, nc);
+
 
     /*
     WriteListMarker(type_name);
@@ -572,3 +579,20 @@ AssignNamedValue :: proc(name: string, value: any, target: any) -> bool {
 */
 
 
+uint_bytes_required :: proc(n: u64) -> u8 {
+    if n <= 0xFF do return 1;
+    if n <= 0xFFFF do return 2;
+    if n <= 0xFFFFFF do return 3;
+    if n <= 0xFFFFFFFF do return 4;
+    if n <= 0xFFFFFFFFFF do return 5;
+    if n <= 0xFFFFFFFFFFFF do return 6;
+    if n <= 0xFFFFFFFFFFFFFF do return 7;
+    return 8;
+}
+
+encode_u64_dynamic :: proc(out: ^WriteBuffer, value: u64, n: u8) {
+    assert(n <= 8);
+    value := le_u64(value);
+    value_bytes := transmute([8]byte)value;
+    append(out, ..(value_bytes[:n]));
+}
