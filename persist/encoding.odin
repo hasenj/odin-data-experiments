@@ -28,9 +28,11 @@ Header :: struct {
 }
 
 make_header :: proc(repoType: typeid) -> ^Header {
-    // build a dependency graph and build the tables list so each table has its dependencies before it!
-    // this is important so that when we deserialize the data we don't have any recursive back-and-forth.
-    // or maybe it doesn't matter - maybe move this logic to the deserialization part? or create another array that is a list of numbers
+    // build a dependency graph and build the tables list so each table has its
+    // dependencies before it!  this is important so that when we deserialize
+    // the data we don't have any recursive back-and-forth.  or maybe it
+    // doesn't matter - maybe move this logic to the deserialization part? or
+    // create another array that is a list of numbers
     h := new(Header);
 
     // assuming T is a struct that contains only arrays of structs, iterate over its fields and generate a Table for each field that is an array of structs
@@ -71,13 +73,19 @@ enc_main :: proc() {
     fmt.println(repo2);
 }
 
+DumpMemory :: proc(data: []byte) {
+    for _, index in data {
+        fmt.println("%x: %x\n", &data[index], data[index]);
+    }
+}
+
 Struct_Info :: struct {
     ptr: rawptr,
     info: runtime.Type_Info_Struct,
     type_name: string,
 }
 
-get_struct_info :: proc(obj: any) -> (Struct_Info, bool) {
+GetStructInfo :: proc(obj: any) -> (Struct_Info, bool) {
     data: Struct_Info;
     data.ptr = obj.data;
 
@@ -89,7 +97,8 @@ get_struct_info :: proc(obj: any) -> (Struct_Info, bool) {
         switch v in info.variant {
             case runtime.Type_Info_Pointer:
                 info = v.elem;
-                data.ptr = (cast(^rawptr)data.ptr)^; // ptr was a pointer to a pointer; go inside!
+                // ptr was a pointer to a pointer; go inside!
+                data.ptr = (cast(^rawptr)data.ptr)^;
             case runtime.Type_Info_Named:
                 data.type_name = v.name;
                 info = v.base;
@@ -97,7 +106,7 @@ get_struct_info :: proc(obj: any) -> (Struct_Info, bool) {
                 data.info = v;
                 return data, true;
             case:
-                fmt.println("while looking for struct info, encountered an unknown variant: ", v);
+                fmt.println("while looking for struct info, encountered an type unknown variant: ", v);
                 return Struct_Info{}, false;
         }
     }
@@ -135,8 +144,86 @@ Marker :: enum byte {
     StringValue,
 }
 
+WriteBuffer :: [dynamic]byte;
+ReadBuffer :: []byte;
+
+List_Info :: struct {
+    element_type: ^runtime.Type_Info,
+    element_size: int,
+    array_size: int,
+    array_head: rawptr,
+}
+
+GetListInfo :: proc(list: any) -> (List_Info, bool) {
+    data: List_Info;
+    ptr: rawptr = list.data;
+    info := type_info_of(list.id);
+    for {
+        switch v in info.variant {
+            case runtime.Type_Info_Pointer:
+                ptr = (cast(^rawptr)ptr)^; // was pointer to pointer, so go one level deeper
+                info = v.elem;
+            case runtime.Type_Info_Array:
+                data.element_type = v.elem;
+                data.element_size = v.elem_size;
+                data.array_head = ptr;
+                data.array_size = v.count;
+                return data, true;
+            case runtime.Type_Info_Slice:
+                arr := cast(^mem.Raw_Slice)ptr;
+                data.element_type = v.elem;
+                data.element_size = v.elem_size;
+                data.array_size = arr.len;
+                data.array_head = arr.data;
+                return data, true;
+            case runtime.Type_Info_Dynamic_Array:
+                arr := cast(^mem.Raw_Dynamic_Array)ptr;
+                data.element_type = v.elem;
+                data.element_size = v.elem_size;
+                data.array_size = arr.len;
+                data.array_head = arr.data;
+                return data, true;
+            case:
+                fmt.println("while looking for list info, encountered an unknown type variant: ", v);
+                return List_Info{}, false;
+        }
+    }
+    // should be unreachable
+    return List_Info{}, false;
+}
+
+EncodeList :: proc(out: ^WriteBuffer, list: any) {
+    // get the type name!
+    element_type: ^runtime.Type_Info;
+    element_size: int;
+    array_size: int;
+    array_head: rawptr;
+    ptr: rawptr = list.data;
+    info, ok := GetListInfo(list);
+    if !ok {
+        fmt.println("not a list");
+        return;
+    }
+
+    fmt.println("list info:", info);
+
+    /*
+    WriteListMarker(type_name);
+    WriteInt(fields_count);
+    for index in 0..< fields_count {
+        WriteTypeMarker(field_encoding_type, field_name);
+    }
+    WriteObjectsMarker(objects_count);
+    for object_index in 0 ..< objects_count {
+        for field_index in 0 ..< fields_count {
+        }
+    }
+    */
+}
+
+
 encode_object :: proc(out: ^[dynamic]byte, obj: any) {
-    struct_info, ok := get_struct_info(obj);
+    struct_info, ok := GetStructInfo(obj);
     if !ok {
         fmt.println("not a struct");
         return;
@@ -146,7 +233,9 @@ encode_object :: proc(out: ^[dynamic]byte, obj: any) {
     tinfo := struct_info.info;
     for name, index in tinfo.names {
         field := GetField(struct_info.ptr, tinfo, index);
-        // TODO: maybe we need a function that returns an array of 'any' for the object so that it can do things like recurse into structs (not pointers)
+        // TODO: maybe we need a function that returns an array of 'any' for
+        // the object so that it can do things like recurse into structs (not
+        // pointers)
         append(out, byte(Marker.Field));
         encode_string(out, name);
         switch v in field {
@@ -183,7 +272,7 @@ get_object_id :: proc(obj_: any) -> (int, bool) {
     // if it's a pointer, let _that_ print its id
     obj := obj_;
     for {
-        info, ok := get_struct_info(obj);
+        info, ok := GetStructInfo(obj);
         if !ok {
             return 0, false;
         }
@@ -208,13 +297,18 @@ encode_bytes :: proc(out: ^[dynamic]byte, t: []byte) {
     append(out, ..t);
 }
 
-le_i64 :: proc(i: i64) -> i64 { when os.ENDIAN == "little" { return i; } else { return bits.byte_swap(i); } }
-le_u64 :: proc(i: u64) -> u64 { when os.ENDIAN == "little" { return i; } else { return bits.byte_swap(i); } }
+le_i64 :: proc(i: i64) -> i64 {
+    when os.ENDIAN == "little" { return i; } else { return bits.byte_swap(i); }
+}
+le_u64 :: proc(i: u64) -> u64 {
+    when os.ENDIAN == "little" { return i; } else { return bits.byte_swap(i); }
+}
 
 encode_i64 :: proc(out: ^[dynamic]byte, v: i64) {
     // write the bytes in little endian order
     v := le_i64(v);
-    // copy the bytes to a local variable .. might be a superfluous step but I think it adds clarity. Might be removed later.
+    // copy the bytes to a local variable .. might be a superfluous step but I
+    // think it adds clarity. Might be removed later.
     N :: size_of(v);
     b: [N]byte;
     mem.copy(&b, &v, N);
@@ -224,7 +318,8 @@ encode_i64 :: proc(out: ^[dynamic]byte, v: i64) {
 encode_u64 :: proc(out: ^[dynamic]byte, v: u64) {
     // write the bytes in little endian order
     v := le_u64(v);
-    // copy the bytes to a local variable .. might be a superfluous step but I think it adds clarity. Might be removed later.
+    // copy the bytes to a local variable .. might be a superfluous step but I
+    // think it adds clarity. Might be removed later.
     N :: size_of(v);
     b: [N]byte;
     mem.copy(&b, &v, N);
@@ -237,7 +332,6 @@ scanner :: struct(T: typeid) {
     buffer: []T,
     cursor: int,
 }
-
 
 AtEnd :: proc(sc: ^scanner($T)) -> bool {
     return sc.cursor >= len(sc.buffer);
@@ -278,10 +372,38 @@ ReadMarker :: proc(sc: ^scanner(byte)) -> Marker {
 }
 */
 
+field_type :: enum u8 {
+    Int, // all signed integer types
+    Uint, // all unsigned integer types, and bools
+    Bytes, // []byte or string
+    Chunked, // for large []byte or string ( > 4k)
+}
 
-DecodeObject :: proc(buf: ^[dynamic]byte, obj: any) -> bool {
+type_encoding :: struct {
+    // fields
+    names: []string,
+    types: []field_type,
+}
+
+field_marker :: bit_field {
+    marker: 2,
+    index: 4, // the field index in the []field_type array
+    bytes: 2, // how many bytes are used for encoding (only if type is number)
+}
+
+object_marker :: bit_field {
+    marker: 2,
+    // TODO!!
+}
+
+decoder :: struct {
+    types: map[string]type_encoding
+}
+
+
+DecodeObject :: proc(buf: ReadBuffer, obj: any) -> bool {
     fmt.println("DECODING: TODO!");
-    sc := scanner(byte){buffer = buf[:]};
+    sc := scanner(byte){buffer = buf};
     b := ReadMarker(&sc);
     if b != .Object {
         fmt.println("DBG:", "not an object!!");
@@ -289,7 +411,7 @@ DecodeObject :: proc(buf: ^[dynamic]byte, obj: any) -> bool {
     }
     name := DecodeString(&sc);
     fmt.println("type name:", name);
-    target, targetOk := get_struct_info(obj);
+    target, targetOk := GetStructInfo(obj);
     for !AtEnd(&sc) {
         b := ReadMarker(&sc);
         // boundary conditions
@@ -321,6 +443,8 @@ DecodeObject :: proc(buf: ^[dynamic]byte, obj: any) -> bool {
             case .IntValue:
                 v := ReadInt(&sc);
                 fmt.println("field value:", v);
+                // TODO: if the field is a pointer we should get the pointed
+                // item from the report hosting the type!!
                 if field != nil do assign_i64(v, field);
             case .UintValue:
                 v := ReadUint(&sc);
@@ -371,3 +495,30 @@ AssignNamedValue :: proc(name: string, value: any, target: any) -> bool {
     fmt.println("Assigning", value, "to field:", name);
     return true;
 }
+
+
+
+/*
+    current method is robust but wasteful. should we improve it now or improve it later?
+    if we improve it now we might just be hitting our head against the wall
+    if we defer improvement for later we might suffer a bit later but also we
+    can get progress on other aspects
+
+    encoding scheme:
+        object marker
+        object type name
+        fields_count: int
+        [field_type, name_bytes_count, name_bytes] -> field type and name
+        elements_count: int -> how many items of this object are present
+        field_index
+        field_value
+        separator marker
+        repeat until we finish all elements of this type
+        repeat until we finish all types
+
+    would this lend itself nicely or poorly for network synchronization?
+    would this lend itself nicely or poorly for schema changes?
+    would this lend itself nicely or poorly if two different nodes have
+    slightly different schemas? (from running a different version)
+
+*/

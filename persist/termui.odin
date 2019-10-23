@@ -7,8 +7,6 @@ import "core:mem"
 import "core:strings"
 import "core:strconv"
 
-// this is just a demo for letting a user edit an object via the console!
-
 SampleObject :: struct {
     name: string,
     job_title: string,
@@ -16,33 +14,30 @@ SampleObject :: struct {
     birth_month: int,
 }
 
-
-write_list :: proc(list: []$T, file: os.Handle) {
-}
-
-write_string :: proc(text: string, file: os.Handle) {
-}
-
 term_main :: proc() {
-    person: SampleObject;
+    objects := make([dynamic]SampleObject, 10);
+    person := &objects[0];
     person.name = "Hasen";
     person.job_title = "Programmer";
     person.birth_year = 1985;
     person.birth_month = 5;
-    // fmt.printf("address of our object: %d\n", cast(rawptr)(&person));
-    // edit_object(&person);
+    // edit_object(person);
 
     fmt.println("object is:", person);
     buf := make([dynamic]byte);
     encode_object(&buf, person);
-    fmt.println("Encoded to bytes:", buf);
+    fmt.println("Encoded to bytes:");
+
+    buf2 := make([dynamic]byte, 0, 128);
+    EncodeList(&buf2, objects[:]);
+    DumpMemory(buf2[:]);
 
     person2: SampleObject;
     person2.name = "something that will never be real";
     person2.birth_year = 4332;
     person2.birth_month = 523;
     fmt.println("new object:", person2);
-    DecodeObject(&buf, person2);
+    DecodeObject(buf[:], person2);
     fmt.println("new object after decoding from buffer", person2);
 }
 
@@ -51,7 +46,7 @@ edit_object :: proc(obj: any) {
     fmt.println("Editing object:", obj);
 
     // expect a pointer to a struct, or the struct info to be in there somewhere!
-    type_data, ok := get_struct_info(obj);
+    type_data, ok := GetStructInfo(obj);
     if !ok {
         fmt.println("not a struct");
         return;
