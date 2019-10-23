@@ -73,10 +73,33 @@ enc_main :: proc() {
     fmt.println(repo2);
 }
 
-DumpMemory :: proc(data: []byte) {
-    for _, index in data {
-        fmt.println("%x: %x\n", &data[index], data[index]);
+DumpMemory :: proc(list: []byte) {
+    fmt.printf("memory dump of: %v with %d elements\n", mem.raw_data(list), len(list));
+    per_line :: 6;
+    for index := 0; index < len(list); index += per_line {
+        fmt.printf("%x: ", &list[index]);
+        end := index + per_line;
+        if end > len(list) {
+            end = len(list);
+        }
+        for j := index; j < end; j+= 1 {
+            fmt.printf("%x ", list[j]);
+        }
+        // in case this is the last line, append some extra space for the missing items
+        if index + per_line > end {
+            for j := end; j < index + per_line; j += 1 {
+                fmt.print("   ");
+            }
+        }
+        fmt.printf("  ");
+        for j := index; j < end; j+= 1 {
+            fmt.printf("%8b ", list[j]);
+        }
+        fmt.println();
     }
+    fmt.println("----------");
+    fmt.println(cast(string)list);
+    fmt.println("End of memory dump");
 }
 
 Struct_Info :: struct {
@@ -152,60 +175,79 @@ List_Info :: struct {
     element_size: int,
     array_size: int,
     array_head: rawptr,
+    element_type_name: string,
 }
 
 GetListInfo :: proc(list: any) -> (List_Info, bool) {
     data: List_Info;
     ptr: rawptr = list.data;
     info := type_info_of(list.id);
-    for {
-        switch v in info.variant {
-            case runtime.Type_Info_Pointer:
-                ptr = (cast(^rawptr)ptr)^; // was pointer to pointer, so go one level deeper
-                info = v.elem;
-            case runtime.Type_Info_Array:
-                data.element_type = v.elem;
-                data.element_size = v.elem_size;
-                data.array_head = ptr;
-                data.array_size = v.count;
-                return data, true;
-            case runtime.Type_Info_Slice:
-                arr := cast(^mem.Raw_Slice)ptr;
-                data.element_type = v.elem;
-                data.element_size = v.elem_size;
-                data.array_size = arr.len;
-                data.array_head = arr.data;
-                return data, true;
-            case runtime.Type_Info_Dynamic_Array:
-                arr := cast(^mem.Raw_Dynamic_Array)ptr;
-                data.element_type = v.elem;
-                data.element_size = v.elem_size;
-                data.array_size = arr.len;
-                data.array_head = arr.data;
-                return data, true;
-            case:
-                fmt.println("while looking for list info, encountered an unknown type variant: ", v);
-                return List_Info{}, false;
-        }
+
+    // allow one level of pointer
+    if ptr_info, ok := info.variant.(runtime.Type_Info_Pointer); ok {
+        ptr = (cast(^rawptr)ptr)^; // was pointer to pointer, so go one level deeper
+        info = ptr_info.elem;
     }
-    // should be unreachable
-    return List_Info{}, false;
+
+    switch v in info.variant {
+        case runtime.Type_Info_Array:
+            data.element_type = v.elem;
+            data.element_size = v.elem_size;
+            data.array_head = ptr;
+            data.array_size = v.count;
+        case runtime.Type_Info_Slice:
+            arr := cast(^mem.Raw_Slice)ptr;
+            data.element_type = v.elem;
+            data.element_size = v.elem_size;
+            data.array_size = arr.len;
+            data.array_head = arr.data;
+        case runtime.Type_Info_Dynamic_Array:
+            arr := cast(^mem.Raw_Dynamic_Array)ptr;
+            data.element_type = v.elem;
+            data.element_size = v.elem_size;
+            data.array_size = arr.len;
+            data.array_head = arr.data;
+        case:
+            fmt.println("while looking for list info, encountered an unknown type variant: ", v);
+            return data, false;
+    }
+
+    // we expect the element type to have a name!
+    named, ok := data.element_type.variant.(runtime.Type_Info_Named);
+    if !ok {
+        fmt.println("name not provided!!!");
+        return data, false;
+    }
+    data.element_type_name = named.name;
+    data.element_type = named.base;
+    if _, ok := data.element_type.variant.(runtime.Type_Info_Struct); !ok {
+        fmt.println("array element is not a struct! can't handle");
+        return data, false;
+    }
+
+    return data, true;
 }
 
 EncodeList :: proc(out: ^WriteBuffer, list: any) {
     // get the type name!
-    element_type: ^runtime.Type_Info;
-    element_size: int;
-    array_size: int;
-    array_head: rawptr;
-    ptr: rawptr = list.data;
     info, ok := GetListInfo(list);
     if !ok {
         fmt.println("not a list");
         return;
     }
+    if info.array_size == 0 {
+        // nothing to encode!!
+        fmt.println("empty array, nothing to encode");
+        return;
+    }
 
     fmt.println("list info:", info);
+    b: object_marker;
+    b.type = marker_type.object;
+    b.name_length = len(info.element_type_name);
+    fmt.printf("object_marker: %v 0b%8b\n", b, transmute(byte)b);
+    append(out, transmute(byte)b);
+    append(out, ..(cast([]byte)(info.element_type_name)));
 
     /*
     WriteListMarker(type_name);
@@ -385,15 +427,21 @@ type_encoding :: struct {
     types: []field_type,
 }
 
+// must fit into two bits!
+marker_type :: enum u8 {
+    object = 1,
+    field = 2,
+}
+
 field_marker :: bit_field {
-    marker: 2,
+    type: 2,
     index: 4, // the field index in the []field_type array
     bytes: 2, // how many bytes are used for encoding (only if type is number)
 }
 
 object_marker :: bit_field {
-    marker: 2,
-    // TODO!!
+    type: 2,
+    name_length: 6,
 }
 
 decoder :: struct {
@@ -522,3 +570,5 @@ AssignNamedValue :: proc(name: string, value: any, target: any) -> bool {
     slightly different schemas? (from running a different version)
 
 */
+
+
