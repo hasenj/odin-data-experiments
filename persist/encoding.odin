@@ -74,16 +74,13 @@ enc_main :: proc() {
 }
 
 DumpMemory :: proc(list: []byte) {
-    fmt.printf("memory dump of: %v with %d elements\n", mem.raw_data(list), len(list));
-    per_line :: 6;
+    // fmt.printf("memory dump of: %v with %d elements\n", mem.raw_data(list), len(list));
+    per_line :: 8;
     for index := 0; index < len(list); index += per_line {
         fmt.printf("%x: ", &list[index]);
         end := index + per_line;
         if end > len(list) {
             end = len(list);
-        }
-        for j := index; j < end; j+= 1 {
-            fmt.printf("%2x ", list[j]);
         }
         // in case this is the last line, append some extra space for the missing items
         if index + per_line > end {
@@ -91,15 +88,23 @@ DumpMemory :: proc(list: []byte) {
                 fmt.print("   ");
             }
         }
-        fmt.printf("  ");
         for j := index; j < end; j+= 1 {
-            fmt.printf("%8b ", list[j]);
+            fmt.printf("%2x ", list[end - j - 1]);
+        }
+        fmt.printf("  ");
+        if index + per_line > end {
+            for j := end; j < index + per_line; j += 1 {
+                fmt.print("         ");
+            }
+        }
+        for j := index; j < end; j+= 1 {
+            fmt.printf("%8b ", list[end - j - 1]);
         }
         fmt.println();
     }
-    fmt.println("----------");
-    fmt.println(cast(string)list);
-    fmt.println("End of memory dump");
+    // fmt.println("----------");
+    // fmt.println(cast(string)list);
+    // fmt.println("End of memory dump");
 }
 
 Struct_Info :: struct {
@@ -346,18 +351,11 @@ encode_bytes :: proc(out: ^[dynamic]byte, t: []byte) {
     append(out, ..t);
 }
 
-le_i64 :: proc(i: i64) -> i64 {
-    when os.ENDIAN == "little" { return i; } else { return bits.byte_swap(i); }
-}
-le_u64 :: proc(i: u64) -> u64 {
-    when os.ENDIAN == "little" { return i; } else { return bits.byte_swap(i); }
-}
-
 encode_i64 :: proc(out: ^[dynamic]byte, v: i64) {
     // write the bytes in little endian order
-    v := le_i64(v);
     // copy the bytes to a local variable .. might be a superfluous step but I
     // think it adds clarity. Might be removed later.
+    v := v; // so we can take a pointer!
     N :: size_of(v);
     b: [N]byte;
     mem.copy(&b, &v, N);
@@ -366,9 +364,9 @@ encode_i64 :: proc(out: ^[dynamic]byte, v: i64) {
 
 encode_u64 :: proc(out: ^[dynamic]byte, v: u64) {
     // write the bytes in little endian order
-    v := le_u64(v);
     // copy the bytes to a local variable .. might be a superfluous step but I
     // think it adds clarity. Might be removed later.
+    v := v; // so we can take a pointer!
     N :: size_of(v);
     b: [N]byte;
     mem.copy(&b, &v, N);
@@ -592,7 +590,103 @@ uint_bytes_required :: proc(n: u64) -> u8 {
 
 encode_u64_dynamic :: proc(out: ^WriteBuffer, value: u64, n: u8) {
     assert(n <= 8);
-    value := le_u64(value);
     value_bytes := transmute([8]byte)value;
     append(out, ..(value_bytes[:n]));
+}
+
+int_bytes_required :: proc(ni: i64) -> u8 {
+    // count repeated 0 or 1
+    n := transmute(u64)ni;
+    bit : u64 : 0b1; // 0b00....001
+    farthest := (n >> 63) & bit;
+    // fmt.println("farthest is", farthest);
+    bits_needed: u8;
+    for i: u8 = 63; i > 0; i -= 1 {
+        n_i := n >> i;
+        state := n_i & bit;
+        // fmt.println("at", i, "state is", state);
+        if state != farthest {
+            bits_needed = i + 2; // one shift for the off-by-one, and one shift for the extra bit that needs to be reserved
+            break;
+        }
+    }
+    fmt.println("bits required:", bits_needed);
+    // bytes needed is ceil of bits_needed / 8
+    // default int division is floor based
+    if bits_needed % 8 == 0 {
+        return bits_needed / 8;
+    } else {
+        return (bits_needed / 8) + 1;
+    }
+}
+
+encode_i64_dynamic :: proc(out: ^WriteBuffer, value: i64, n: u8) {
+    assert(n <= 8);
+    value := value;
+    value_bytes := transmute([8]byte)value;
+    append(out, ..(value_bytes[:n]));
+}
+
+decode_i64_dynamic :: proc(buf: ReadBuffer) -> i64 {
+    assert(len(buf) <= 8);
+    result: i64;
+    mem.copy(&result, mem.raw_data(buf), len(buf));
+    fmt.printf("read %d bytes as %64x \n", len(buf), transmute(u64)result);
+    // shift to the edge and back to fill the sign bits
+    // i.e. if the input is `0xff 0xAB` we want the output to be `0xff 0xff ... 0xff 0xAB`
+    bits_filled := cast(u8)(8 * len(buf));
+    bits_left := 64 - bits_filled;
+    result = result << bits_left;
+    result = result >> bits_left;
+    return result;
+}
+
+test_dynamic_encodings :: proc() {
+
+    try :: proc(v: i64) {
+        buf := make(WriteBuffer, 0);
+        defer delete(buf);
+        fmt.printf("testing encoding of %d [ %8x ]\n", v, transmute(u64)v);
+        repr := transmute([8]byte)v;
+        DumpMemory(repr[:]);
+        n := int_bytes_required(v);
+        encode_i64_dynamic(&buf, v, n);
+        fmt.println("encoded as:");
+        DumpMemory(buf[:]);
+
+        fmt.println("Attempting to decode!");
+        readback := decode_i64_dynamic(buf[:]);
+        fmt.println("Read back result:", readback);
+        fmt.println("Result seems correct?", readback == v);
+
+        fmt.println();
+    }
+
+    try(543332);
+    try(-543332);
+    try(256);
+    try(-256);
+    try(255);
+    try(-255);
+    try(127);
+    try(128);
+    try(-127);
+    try(-128);
+    try(-10);
+    try(10);
+}
+
+enc_test :: proc() {
+    test_dynamic_encodings();
+
+    objects := make([dynamic]SampleObject, 10);
+    person := &objects[0];
+    person.name = "Hasen";
+    person.job_title = "Programmer";
+    person.birth_year = 1985;
+    person.birth_month = 5;
+
+    buf2 := make([dynamic]byte, 0, 128);
+    EncodeList(&buf2, objects[:]);
+    DumpMemory(buf2[:]);
 }

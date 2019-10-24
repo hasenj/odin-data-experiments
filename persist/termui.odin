@@ -21,24 +21,22 @@ term_main :: proc() {
     person.job_title = "Programmer";
     person.birth_year = 1985;
     person.birth_month = 5;
-    // edit_object(person);
+    edit_object(person);
 
-    // fmt.println("object is:", person);
-    // buf := make([dynamic]byte);
-    // encode_object(&buf, person);
-    // fmt.println("Encoded to bytes:");
+    /*
+    fmt.println("object is:", person);
+    buf := make([dynamic]byte);
+    encode_object(&buf, person);
+    fmt.println("Encoded to bytes:");
 
-    buf2 := make([dynamic]byte, 0, 128);
-    EncodeList(&buf2, objects[:]);
-    DumpMemory(buf2[:]);
-
-    // person2: SampleObject;
-    // person2.name = "something that will never be real";
-    // person2.birth_year = 4332;
-    // person2.birth_month = 523;
-    // fmt.println("new object:", person2);
-    // DecodeObject(buf[:], person2);
-    // fmt.println("new object after decoding from buffer", person2);
+    person2: SampleObject;
+    person2.name = "something that will never be real";
+    person2.birth_year = 4332;
+    person2.birth_month = 523;
+    fmt.println("new object:", person2);
+    DecodeObject(buf[:], person2);
+    fmt.println("new object after decoding from buffer", person2);
+    */
 }
 
 edit_object :: proc(obj: any) {
