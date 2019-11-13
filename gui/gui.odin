@@ -66,6 +66,8 @@ main :: proc() {
         sdl.render_copy(renderer, text_texture2, nil, &pos);
 
         sdl.render_present(renderer);
+
+        sdl.delay(100);
     }
 
     sdl.quit();
