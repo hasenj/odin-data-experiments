@@ -37,6 +37,12 @@ render_text_to_texture :: proc(renderer: ^sdl.Renderer, fonts: []^sdl_ttf.Font, 
 }
 
 main :: proc() {
+    bg_color := hsla(0, 0, 99.5);
+    txt_color := hsla(0, 0, 30);
+    ime_color := hsla(0, 0, 60);
+
+    fmt.println(bg_color, txt_color, ime_color);
+
     sdl.init(sdl.Init_Flags.Everything);
     window := sdl.create_window("Test window", i32(sdl.Window_Pos.Undefined), i32(sdl.Window_Pos.Undefined), 1024, 900, sdl.Window_Flags(0));
     renderer := sdl.create_renderer(window, -1, sdl.Renderer_Flags(0));
@@ -54,7 +60,7 @@ main :: proc() {
         en_font, ar_font, jp_font,
     };
 
-    text_surface0 := sdl_ttf.render_utf8_blended(en_font, "odin-sdl2 now supports packages!", sdl.Color{157, 136, 221, 255});
+    text_surface0 := sdl_ttf.render_utf8_blended(en_font, "odin-sdl2 now supports packages!", txt_color);
     text_texture0 := sdl.create_texture_from_surface(renderer, text_surface0);
     sdl.free_surface(text_surface0);
 
@@ -62,11 +68,11 @@ main :: proc() {
     text = shape(text);
     text = strings.reverse(text); // temporary until we get bidi
     ctext := strings.clone_to_cstring(text);
-    text_surface1 := sdl_ttf.render_utf8_blended(ar_font, ctext, sdl.Color{157, 136, 221, 255});
+    text_surface1 := sdl_ttf.render_utf8_blended(ar_font, ctext, txt_color);
     text_texture1 := sdl.create_texture_from_surface(renderer, text_surface1);
     sdl.free_surface(text_surface1);
 
-    text_surface2 := sdl_ttf.render_utf8_blended(jp_font, strings.clone_to_cstring(strings.reverse("日本語でも出来ます！")), sdl.Color{157, 136, 221, 255});
+    text_surface2 := sdl_ttf.render_utf8_blended(jp_font, strings.clone_to_cstring(strings.reverse("日本語でも出来ます！")), txt_color);
     text_texture2 := sdl.create_texture_from_surface(renderer, text_surface2);
     sdl.free_surface(text_surface2);
 
@@ -108,7 +114,7 @@ main :: proc() {
                         sdl.destroy_texture(input_state.rendered_ime);
                         input_state.rendered_ime = nil;
                     }
-                    input_state.rendered_input = render_text_to_texture(renderer, known_fonts, sdl.Color{157, 136, 221, 255}, string(input_state.data[:]));
+                    input_state.rendered_input = render_text_to_texture(renderer, known_fonts, txt_color, string(input_state.data[:]));
                 case .Text_Editing:
                     input_string := as_string(e.text.text[:]);
                     fmt.println("text editing event", input_string);
@@ -118,10 +124,10 @@ main :: proc() {
                         sdl.destroy_texture(input_state.rendered_ime);
                         input_state.rendered_ime = nil;
                     }
-                    input_state.rendered_ime = render_text_to_texture(renderer, known_fonts, sdl.Color{187, 156, 230, 200}, string(input_state.ime_data[:]));
+                    input_state.rendered_ime = render_text_to_texture(renderer, known_fonts, ime_color, string(input_state.ime_data[:]));
             }
         }
-        sdl.set_render_draw_color(renderer, 0, 0, 0, 255);
+        sdl.set_render_draw_color(renderer, bg_color.r, bg_color.g, bg_color.b, bg_color.a);
         sdl.render_clear(renderer);
 
         pos := sdl.Rect{20, 20, 800, 400};
@@ -160,6 +166,7 @@ main :: proc() {
     sdl.quit();
 }
 
+// does not allocate. Just slices the data up to the null terminator
 as_string :: proc(data: []u8) -> string {
     // find the zero term
     z := 0;
@@ -170,4 +177,65 @@ as_string :: proc(data: []u8) -> string {
         }
     }
     return string(data[:z]);
+}
+
+hsla :: proc(h, s, l: f64, a: f64 = 1) -> sdl.Color {
+    r, g, b := float_hsl_to_rgb(h / 255.0, s / 100.0, l / 100.0);
+    fmt.printf("hsl(%v, %v, %v) -> rgb(%v, %v, %v)\n", h, s, l, r, g, b);
+    return sdl.Color {
+        r = u8(int(r * 255)),
+        g = u8(int(g * 255)),
+        b = u8(int(b * 255)),
+        a = u8(int(a * 255)),
+    };
+}
+
+// taken from https://github.com/alessani/ColorConverter/blob/master/ColorSpaceUtilities.h
+float_hsl_to_rgb :: proc(h: f64, s: f64, l: f64) -> (r: f64, g: f64, b: f64) {
+    // Check for saturation. If there isn't any just return the luminance value for each, which results in gray.
+    if s == 0.0 {
+        return l, l, l;
+    }
+
+    temp2: f64;
+    // Test for luminance and compute temporary values based on luminance and saturation
+    if(l < 0.5) {
+        temp2 = l * (1.0 + s);
+    } else {
+        temp2 = l + s - l * s;
+    }
+    temp1 := 2.0 * l - temp2;
+
+    // Compute intermediate values based on hue
+    temp := []f64{
+        h + 1.0 / 3.0,
+        h,
+        h - 1.0 / 3.0,
+    };
+
+    for i in 0..<3 {
+        // Adjust the range
+        if(temp[i] < 0.0) {
+            temp[i] += 1.0;
+        }
+        if(temp[i] > 1.0) {
+            temp[i] -= 1.0;
+        }
+
+        if(6.0 * temp[i] < 1.0) {
+            temp[i] = temp1 + (temp2 - temp1) * 6.0 * temp[i];
+        } else {
+            if(2.0 * temp[i] < 1.0) {
+                temp[i] = temp2;
+            } else {
+                if(3.0 * temp[i] < 2.0) {
+                    temp[i] = temp1 + (temp2 - temp1) * ((2.0 / 3.0) - temp[i]) * 6.0;
+                } else {
+                    temp[i] = temp1;
+                }
+            }
+        }
+    }
+
+    return temp[0], temp[1], temp[2];
 }
