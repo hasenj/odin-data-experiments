@@ -4,6 +4,10 @@ import sdl "shared:odin-sdl2"
 import sdl_image "shared:odin-sdl2/image"
 import sdl_ttf "shared:odin-sdl2/ttf"
 
+// TODO: cleanup the library so we can use the import name inplace of the prefix FT_
+using import "../freetype"
+// import ft "../freetype"
+
 import "core:fmt"
 import "core:mem"
 import "core:strings"
@@ -36,6 +40,32 @@ render_text_to_texture :: proc(renderer: ^sdl.Renderer, fonts: []^sdl_ttf.Font, 
     return sdl.create_texture_from_surface(renderer, surface);
 }
 
+// kind of internal function - should be considered a building block or something
+ft_render_text_run :: proc(fface: FT_Face, text: string) {
+    x, y: i64;
+    // let's just call the functions and report width/height stuff
+    for c in text {
+        fmt.println("char:", c);
+        glyph_index := FT_Get_Char_Index(fface, u64(c));
+        fmt.println("glyph index:", c);
+        err := FT_Load_Glyph(fface, glyph_index, .FT_LOAD_DEFAULT);
+        if err != 0 {
+            fmt.println("error loading glyph");
+            continue;
+        }
+        err = FT_Render_Glyph(fface.glyph, .FT_RENDER_MODE_NORMAL);
+        if err != 0 {
+            fmt.println("error rendering glyph");
+            continue;
+        }
+        pixel_x_advance := fface.glyph.advance.x / 64;
+        pixel_y_advance := fface.glyph.advance.y / 64;
+        x += pixel_x_advance;
+        y += pixel_y_advance;
+        fmt.println("x at:", x, "\ty at:", y);
+    }
+}
+
 main :: proc() {
     bg_color := hsla(0, 0, 99.5);
     txt_color := hsla(0, 0, 30);
@@ -46,25 +76,43 @@ main :: proc() {
     sdl.init(sdl.Init_Flags.Everything);
     window := sdl.create_window("Test window", i32(sdl.Window_Pos.Undefined), i32(sdl.Window_Pos.Undefined), 1024, 900, sdl.Window_Flags(0));
     renderer := sdl.create_renderer(window, -1, sdl.Renderer_Flags(0));
-
     sdl_image.init(sdl_image.Init_Flags.PNG);
     sdl_ttf.init();
 
-    texture := sdl_image.load_texture(renderer, "images/img1.png");
+    ftlib: FT_Library;
+    if FT_Init_FreeType(&ftlib) != 0 {
+        fmt.println("ft init failed!!");
+        return;
+    }
+
+    en_face: FT_Face;
+    jp_face: FT_Face;
+    ar_face: FT_Face;
+    FT_New_Face(ftlib, "fonts/NotoSans-Medium.ttf", 0, &en_face);
+    FT_New_Face(ftlib, "fonts/DroidNaskh-Regular.ttf", 0, &ar_face);
+    FT_New_Face(ftlib, "fonts/AiharaHudemojiKaisho2.01.ttf", 0, &jp_face);
+
+    FT_Set_Pixel_Sizes(en_face, 0, 16);
+    FT_Set_Pixel_Sizes(jp_face, 0, 16);
+    FT_Set_Pixel_Sizes(ar_face, 0, 16);
+
+    ft_render_text_run(en_face, "hello");
 
     en_font := sdl_ttf.open_font("fonts/NotoSans-Medium.ttf", 90);
     ar_font := sdl_ttf.open_font("fonts/DroidNaskh-Regular.ttf", 90);
     jp_font := sdl_ttf.open_font("fonts/AiharaHudemojiKaisho2.01.ttf", 90);
 
+    texture := sdl_image.load_texture(renderer, "images/img1.png");
+
     known_fonts := []^sdl_ttf.Font {
         en_font, ar_font, jp_font,
     };
 
-    text_surface0 := sdl_ttf.render_utf8_blended(en_font, "odin-sdl2 now supports packages!", txt_color);
+    text_surface0 := sdl_ttf.render_utf8_blended(en_font, "odin-sdl2 works!", txt_color);
     text_texture0 := sdl.create_texture_from_surface(renderer, text_surface0);
     sdl.free_surface(text_surface0);
 
-    text : string = "كتابة عربية كلام عربي";
+    text : string = "كتابة عربية";
     text = shape(text);
     text = strings.reverse(text); // temporary until we get bidi
     ctext := strings.clone_to_cstring(text);
@@ -72,7 +120,7 @@ main :: proc() {
     text_texture1 := sdl.create_texture_from_surface(renderer, text_surface1);
     sdl.free_surface(text_surface1);
 
-    text_surface2 := sdl_ttf.render_utf8_blended(jp_font, strings.clone_to_cstring(strings.reverse("日本語でも出来ます！")), txt_color);
+    text_surface2 := sdl_ttf.render_utf8_blended(jp_font, "日本語でも出来ます！", txt_color);
     text_texture2 := sdl.create_texture_from_surface(renderer, text_surface2);
     sdl.free_surface(text_surface2);
 
