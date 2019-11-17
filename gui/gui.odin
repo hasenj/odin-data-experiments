@@ -40,14 +40,33 @@ render_text_to_texture :: proc(renderer: ^sdl.Renderer, fonts: []^sdl_ttf.Font, 
     return sdl.create_texture_from_surface(renderer, surface);
 }
 
+Text_Style :: struct {
+    color: sdl.Color,
+    size: int, // in pixels!!
+}
+
 // kind of internal function - should be considered a building block or something
-ft_render_text_run :: proc(fface: FT_Face, text: string) {
+ft_render_text_run :: proc(fface: FT_Face, text: string, st: Text_Style) -> ^sdl.Surface {
+    FT_Set_Pixel_Sizes(fface, 0, u32(st.size));
+
+    // TODO: calculate a better surface!!
+    surface := sdl.create_rgb_surface(0, 800, i32(st.size) * 4, 32,
+        0x000000ff,
+        0x0000ff00,
+        0x00ff0000,
+        0xff000000,
+    );
     x, y: i64;
+    y = i64(st.size);
+    fmt.println("font stuff:");
+    fmt.println("ascender:", fface.ascender / 64);
+    fmt.println("descender:", fface.descender / 64);
+    fmt.println("ascender - descender:", (fface.ascender - fface.descender)  / 64 );
     // let's just call the functions and report width/height stuff
     for c in text {
         fmt.println("char:", c);
         glyph_index := FT_Get_Char_Index(fface, u64(c));
-        fmt.println("glyph index:", c);
+        fmt.println("glyph index:", glyph_index);
         err := FT_Load_Glyph(fface, glyph_index, .FT_LOAD_DEFAULT);
         if err != 0 {
             fmt.println("error loading glyph");
@@ -58,12 +77,35 @@ ft_render_text_run :: proc(fface: FT_Face, text: string) {
             fmt.println("error rendering glyph");
             continue;
         }
-        pixel_x_advance := fface.glyph.advance.x / 64;
-        pixel_y_advance := fface.glyph.advance.y / 64;
-        x += pixel_x_advance;
-        y += pixel_y_advance;
+
+
         fmt.println("x at:", x, "\ty at:", y);
+        // test: render the bitmap to the console window!!
+        glyph := fface.glyph;
+        bitmap := glyph.bitmap;
+        buffer := bitmap.buffer;
+        target := cast(^u8)surface.pixels;
+        for j in 0..< bitmap.rows {
+            row := int(j);
+            srcRow := mem.ptr_offset(buffer, row * int(bitmap.pitch));
+            targetRow := mem.ptr_offset(target, (int(y) + row - int(glyph.bitmap_top)) * int(surface.pitch));
+            for i in 0..< bitmap.width {
+                v := mem.ptr_offset(srcRow, int(i))^;
+                if v == 0 do continue;
+                pixelColor := st.color;
+                pixelColor.a = v;
+                px := mem.ptr_offset(targetRow, int((u32(x) + i + u32(glyph.bitmap_left)) * 4));
+                mem.copy(px, &pixelColor, 4);
+            }
+        }
+
+        pixel_x_advance := fface.glyph.advance.x / 64;
+        // pixel_y_advance := fface.glyph.advance.y / 64;
+
+        x += pixel_x_advance;
+        // y += pixel_y_advance;
     }
+    return surface;
 }
 
 main :: proc() {
@@ -92,11 +134,9 @@ main :: proc() {
     FT_New_Face(ftlib, "fonts/DroidNaskh-Regular.ttf", 0, &ar_face);
     FT_New_Face(ftlib, "fonts/AiharaHudemojiKaisho2.01.ttf", 0, &jp_face);
 
-    FT_Set_Pixel_Sizes(en_face, 0, 16);
-    FT_Set_Pixel_Sizes(jp_face, 0, 16);
-    FT_Set_Pixel_Sizes(ar_face, 0, 16);
-
-    ft_render_text_run(en_face, "hello");
+    ft_surface := ft_render_text_run(en_face, "hello", Text_Style{txt_color, 70});
+    ft_texture := sdl.create_texture_from_surface(renderer, ft_surface);
+    sdl.free_surface(ft_surface);
 
     en_font := sdl_ttf.open_font("fonts/NotoSans-Medium.ttf", 90);
     ar_font := sdl_ttf.open_font("fonts/DroidNaskh-Regular.ttf", 90);
@@ -181,9 +221,14 @@ main :: proc() {
         pos := sdl.Rect{20, 20, 800, 400};
         sdl.render_copy(renderer, texture, nil, &pos);
 
-        pos.y = 500;
+        pos.y = 460;
         pos.x = 100;
 
+        sdl.query_texture(ft_texture, nil, nil, &pos.w, &pos.h);
+        sdl.render_copy(renderer, ft_texture, nil, &pos);
+
+
+        pos.y = 520;
         sdl.query_texture(text_texture0, nil, nil, &pos.w, &pos.h);
         sdl.render_copy(renderer, text_texture0, nil, &pos);
 
