@@ -2,7 +2,6 @@ package gui
 
 import sdl "shared:odin-sdl2"
 import sdl_image "shared:odin-sdl2/image"
-import sdl_ttf "shared:odin-sdl2/ttf"
 
 // TODO: cleanup the library so we can use the import name inplace of the prefix FT_
 using import "../freetype"
@@ -13,26 +12,8 @@ import "core:mem"
 import "core:strings"
 import "core:unicode/utf8"
 
-render_text :: proc(fonts: []^sdl_ttf.Font, color: sdl.Color, text: string) -> ^sdl.Surface {
-    r0, _ := utf8.decode_rune_in_string(text);
-    // for now just be simple and check only the first glyph!
-    font: ^sdl_ttf.Font;
-    for f in fonts {
-        if sdl_ttf.glyph_is_provided(f, u16(r0)) != 0 {
-            font = f;
-            break;
-        }
-    }
-    if font == nil {
-        return nil; // no suitabe font found; can't render!
-    }
-    ctext := strings.clone_to_cstring(text);
-    defer delete(ctext);
-    return sdl_ttf.render_utf8_blended(font, ctext, color);
-}
-
-render_text_to_texture :: proc(renderer: ^sdl.Renderer, fonts: []^sdl_ttf.Font, color: sdl.Color, text: string) -> ^sdl.Texture {
-    surface := render_text(fonts, color, text);
+ft_render_text_run_to_texture :: proc(renderer: ^sdl.Renderer, faces: []FT_Face, text: string, st: Text_Style) -> ^sdl.Texture {
+    surface := ft_render_text_run(faces, text, st);
     if surface == nil {
         return nil;
     }
@@ -46,33 +27,60 @@ Text_Style :: struct {
 }
 
 // kind of internal function - should be considered a building block or something
-ft_render_text_run :: proc(fface: FT_Face, text: string, st: Text_Style) -> ^sdl.Surface {
-    FT_Set_Pixel_Sizes(fface, 0, u32(st.size));
+ft_render_text_run :: proc(faces: []FT_Face, text: string, st: Text_Style) -> ^sdl.Surface {
+    for face in faces {
+        FT_Set_Pixel_Sizes(face, 0, u32(st.size));
+    }
 
-    // TODO: calculate a better surface!!
-    surface := sdl.create_rgb_surface(0, 800, i32(st.size) * 4, 32,
+    // first pass: determine total width
+    width := i32(0);
+    measure_loop:
+    for c in text {
+        // fidnd the face which has the glyph!
+        for face in faces {
+            glyph_index := FT_Get_Char_Index(face, u64(c));
+            if glyph_index == 0 {
+                continue; // next font!
+            }
+            FT_Load_Glyph(face, glyph_index, .FT_LOAD_DEFAULT);
+            width += i32(face.glyph.advance.x / 64);
+            continue measure_loop;
+        }
+        // nothing found!!!! TODO handle this somehow! right now we just skip it I guess?!
+    }
+    height := i32(st.size);
+
+    surface := sdl.create_rgb_surface(0, width, height * 2, 32,
         0x000000ff,
         0x0000ff00,
         0x00ff0000,
         0xff000000,
     );
+
     x, y: i64;
     y = i64(st.size);
-    fmt.println("font stuff:");
-    fmt.println("ascender:", fface.ascender / 64);
-    fmt.println("descender:", fface.descender / 64);
-    fmt.println("ascender - descender:", (fface.ascender - fface.descender)  / 64 );
-    // let's just call the functions and report width/height stuff
+
     for c in text {
         fmt.println("char:", c);
-        glyph_index := FT_Get_Char_Index(fface, u64(c));
+        face: FT_Face;
+        glyph_index: u32;
+        for f in faces {
+            glyph_index = FT_Get_Char_Index(f, u64(c));
+            if glyph_index == 0 do continue;
+            face = f;
+            break;
+        }
+        if glyph_index == 0 {
+            // not found!
+            continue;
+        }
         fmt.println("glyph index:", glyph_index);
-        err := FT_Load_Glyph(fface, glyph_index, .FT_LOAD_DEFAULT);
+        err := FT_Load_Glyph(face, glyph_index, .FT_LOAD_DEFAULT);
         if err != 0 {
             fmt.println("error loading glyph");
             continue;
         }
-        err = FT_Render_Glyph(fface.glyph, .FT_RENDER_MODE_NORMAL);
+        err = FT_Render_Glyph(face.glyph, .FT_RENDER_MODE_NORMAL);
         if err != 0 {
             fmt.println("error rendering glyph");
             continue;
@@ -81,7 +89,7 @@ ft_render_text_run :: proc(fface: FT_Face, text: string, st: Text_Style) -> ^sdl
 
         fmt.println("x at:", x, "\ty at:", y);
         // test: render the bitmap to the console window!!
-        glyph := fface.glyph;
+        glyph := face.glyph;
         bitmap := glyph.bitmap;
         buffer := bitmap.buffer;
         target := cast(^u8)surface.pixels;
@@ -99,8 +107,8 @@ ft_render_text_run :: proc(fface: FT_Face, text: string, st: Text_Style) -> ^sdl
             }
         }
 
-        pixel_x_advance := fface.glyph.advance.x / 64;
-        // pixel_y_advance := fface.glyph.advance.y / 64;
+        pixel_x_advance := face.glyph.advance.x / 64;
+        // pixel_y_advance := face.glyph.advance.y / 64;
 
         x += pixel_x_advance;
         // y += pixel_y_advance;
@@ -119,7 +127,6 @@ main :: proc() {
     window := sdl.create_window("Test window", i32(sdl.Window_Pos.Undefined), i32(sdl.Window_Pos.Undefined), 1024, 900, sdl.Window_Flags(0));
     renderer := sdl.create_renderer(window, -1, sdl.Renderer_Flags(0));
     sdl_image.init(sdl_image.Init_Flags.PNG);
-    sdl_ttf.init();
 
     ftlib: FT_Library;
     if FT_Init_FreeType(&ftlib) != 0 {
@@ -133,34 +140,29 @@ main :: proc() {
     FT_New_Face(ftlib, "fonts/NotoSans-Medium.ttf", 0, &en_face);
     FT_New_Face(ftlib, "fonts/DroidNaskh-Regular.ttf", 0, &ar_face);
     FT_New_Face(ftlib, "fonts/AiharaHudemojiKaisho2.01.ttf", 0, &jp_face);
+    faces := []FT_Face{ en_face, jp_face, ar_face };
 
-    ft_surface := ft_render_text_run(en_face, "hello", Text_Style{txt_color, 70});
+    txt_style := Text_Style{txt_color, 70};
+    ime_style := Text_Style{ime_color, 70};
+
+    ft_surface := ft_render_text_run(faces, "hello 世界 هلة", txt_style);
     ft_texture := sdl.create_texture_from_surface(renderer, ft_surface);
     sdl.free_surface(ft_surface);
 
-    en_font := sdl_ttf.open_font("fonts/NotoSans-Medium.ttf", 90);
-    ar_font := sdl_ttf.open_font("fonts/DroidNaskh-Regular.ttf", 90);
-    jp_font := sdl_ttf.open_font("fonts/AiharaHudemojiKaisho2.01.ttf", 90);
-
     texture := sdl_image.load_texture(renderer, "images/img1.png");
 
-    known_fonts := []^sdl_ttf.Font {
-        en_font, ar_font, jp_font,
-    };
-
-    text_surface0 := sdl_ttf.render_utf8_blended(en_font, "odin-sdl2 works!", txt_color);
+    text_surface0 := ft_render_text_run(faces, "odin-sdl2 works!", txt_style);
     text_texture0 := sdl.create_texture_from_surface(renderer, text_surface0);
     sdl.free_surface(text_surface0);
 
     text : string = "كتابة عربية";
     text = shape(text);
     text = strings.reverse(text); // temporary until we get bidi
-    ctext := strings.clone_to_cstring(text);
-    text_surface1 := sdl_ttf.render_utf8_blended(ar_font, ctext, txt_color);
+    text_surface1 := ft_render_text_run(faces, text, txt_style);
     text_texture1 := sdl.create_texture_from_surface(renderer, text_surface1);
     sdl.free_surface(text_surface1);
 
-    text_surface2 := sdl_ttf.render_utf8_blended(jp_font, "日本語でも出来ます！", txt_color);
+    text_surface2 := ft_render_text_run(faces, "日本語でも出来ます！", txt_style);
     text_texture2 := sdl.create_texture_from_surface(renderer, text_surface2);
     sdl.free_surface(text_surface2);
 
@@ -202,7 +204,7 @@ main :: proc() {
                         sdl.destroy_texture(input_state.rendered_ime);
                         input_state.rendered_ime = nil;
                     }
-                    input_state.rendered_input = render_text_to_texture(renderer, known_fonts, txt_color, string(input_state.data[:]));
+                    input_state.rendered_input = ft_render_text_run_to_texture(renderer, faces, string(input_state.data[:]), txt_style);
                 case .Text_Editing:
                     input_string := as_string(e.text.text[:]);
                     fmt.println("text editing event", input_string);
@@ -212,7 +214,7 @@ main :: proc() {
                         sdl.destroy_texture(input_state.rendered_ime);
                         input_state.rendered_ime = nil;
                     }
-                    input_state.rendered_ime = render_text_to_texture(renderer, known_fonts, ime_color, string(input_state.ime_data[:]));
+                    input_state.rendered_ime = ft_render_text_run_to_texture(renderer, faces, string(input_state.ime_data[:]), ime_style);
             }
         }
         sdl.set_render_draw_color(renderer, bg_color.r, bg_color.g, bg_color.b, bg_color.a);
@@ -228,7 +230,7 @@ main :: proc() {
         sdl.render_copy(renderer, ft_texture, nil, &pos);
 
 
-        pos.y = 520;
+        pos.y += pos.h + 20;
         sdl.query_texture(text_texture0, nil, nil, &pos.w, &pos.h);
         sdl.render_copy(renderer, text_texture0, nil, &pos);
 
