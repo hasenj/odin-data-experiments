@@ -3,17 +3,30 @@ package gui
 import sdl "shared:odin-sdl2"
 import sdl_image "shared:odin-sdl2/image"
 
-// TODO: cleanup the library so we can use the import name inplace of the prefix FT_
-using import "../freetype"
-// import ft "../freetype"
+import ft "../freetype"
+import hb "../harfbuzz"
 
 import "core:fmt"
 import "core:mem"
 import "core:strings"
 import "core:unicode/utf8"
 
-ft_render_text_run_to_texture :: proc(renderer: ^sdl.Renderer, faces: []FT_Face, text: string, st: Text_Style) -> ^sdl.Texture {
-    surface := ft_render_text_run(faces, text, st);
+FontSet :: struct {
+    ft_fonts: [dynamic]ft.Face,
+    hb_fonts: [dynamic]hb.Font,
+}
+
+LoadFont :: proc(lib: ft.Library, s: ^FontSet, path: cstring, face_index: int = 0) {
+    assert(len(s.ft_fonts) == len(s.hb_fonts));
+    ftfont: ft.Face;
+    ft.New_Face(lib, path, i64(face_index), &ftfont);
+    hbfont := hb.FontCreate(ftfont);
+    append(&s.ft_fonts, ftfont);
+    append(&s.hb_fonts, hbfont);
+}
+
+ft_render_text_run_to_texture :: proc(renderer: ^sdl.Renderer, fonts: ^FontSet, text: string, st: Text_Style) -> ^sdl.Texture {
+    surface := ft_render_text_run(fonts, text, st);
     if surface == nil {
         return nil;
     }
@@ -27,27 +40,43 @@ Text_Style :: struct {
 }
 
 // kind of internal function - should be considered a building block or something
-ft_render_text_run :: proc(faces: []FT_Face, text: string, st: Text_Style) -> ^sdl.Surface {
-    for face in faces {
-        FT_Set_Pixel_Sizes(face, 0, u32(st.size));
+ft_render_text_run :: proc(fonts: ^FontSet, text: string, st: Text_Style) -> ^sdl.Surface {
+    for face in fonts.ft_fonts {
+        ft.Set_Pixel_Sizes(face, 0, u32(st.size));
     }
 
-    // first pass: determine total width
-    width := i32(0);
-    measure_loop:
+    // first we should segment the text into several segments based on language and font availability
+    // but for now we'll just use the first matching font for testing
+
+    first_matching_font_index := 0;
+    match_loop:
     for c in text {
-        // fidnd the face which has the glyph!
-        for face in faces {
-            glyph_index := FT_Get_Char_Index(face, u64(c));
+        for face, font_index in fonts.ft_fonts {
+            glyph_index := ft.Get_Char_Index(face, u64(c));
             if glyph_index == 0 {
                 continue; // next font!
             }
-            FT_Load_Glyph(face, glyph_index, .FT_LOAD_DEFAULT);
-            width += i32(face.glyph.advance.x / 64);
-            continue measure_loop;
+            first_matching_font_index = font_index;
+            break match_loop;
         }
-        // nothing found!!!! TODO handle this somehow! right now we just skip it I guess?!
     }
+    // assume a matching font was found and default to first font
+    hb_font := fonts.hb_fonts[first_matching_font_index];
+    ft_font := fonts.ft_fonts[first_matching_font_index];
+
+    // shape the text!
+    buffer := hb.BufferCreate();
+    hb.BufferAddText(buffer, text);
+    hb.BufferGuessProperties(buffer);
+    hb_infos, hb_positions := hb.Shape(hb_font, buffer);
+
+    // pass: determine display width
+    width := i32(0);
+    measure_loop:
+    for pos in hb_positions {
+        width += pos.x_advance / 64;
+    }
+    width *= 2; // HACK!
     height := i32(st.size);
 
     surface := sdl.create_rgb_surface(0, width, height * 2, 32,
@@ -60,58 +89,45 @@ ft_render_text_run :: proc(faces: []FT_Face, text: string, st: Text_Style) -> ^s
     x, y: i64;
     y = i64(st.size);
 
-    for c in text {
-        fmt.println("char:", c);
-        face: FT_Face;
-        glyph_index: u32;
-        for f in faces {
-            glyph_index = FT_Get_Char_Index(f, u64(c));
-            if glyph_index == 0 do continue;
-            face = f;
-            break;
-        }
-        if glyph_index == 0 {
-            // not found!
-            continue;
-        }
+    for info, index in hb_infos {
+        pos := &hb_positions[index];
+        // glyph_index := ft.Get_Char_Index(ft_font, u64(info.codepoint));
+        // if glyph_index == 0 {
+        //     // not found!
+        //     continue;
+        // }
+        glyph_index := info.codepoint;
         fmt.println("glyph index:", glyph_index);
-        err := FT_Load_Glyph(face, glyph_index, .FT_LOAD_DEFAULT);
+        err := ft.Load_Glyph(ft_font, glyph_index, .LOAD_DEFAULT);
         if err != 0 {
             fmt.println("error loading glyph");
             continue;
         }
-        err = FT_Render_Glyph(face.glyph, .FT_RENDER_MODE_NORMAL);
+        err = ft.Render_Glyph(ft_font.glyph, .RENDER_MODE_NORMAL);
         if err != 0 {
             fmt.println("error rendering glyph");
             continue;
         }
 
+        fmt.println("position:", pos);
 
-        fmt.println("x at:", x, "\ty at:", y);
-        // test: render the bitmap to the console window!!
-        glyph := face.glyph;
-        bitmap := glyph.bitmap;
+        bitmap := ft_font.glyph.bitmap;
         buffer := bitmap.buffer;
         target := cast(^u8)surface.pixels;
         for j in 0..< bitmap.rows {
             row := int(j);
             srcRow := mem.ptr_offset(buffer, row * int(bitmap.pitch));
-            targetRow := mem.ptr_offset(target, (int(y) + row - int(glyph.bitmap_top)) * int(surface.pitch));
+            targetRow := mem.ptr_offset(target, (int(y) + row - int(ft_font.glyph.bitmap_top)) * int(surface.pitch));
             for i in 0..< bitmap.width {
                 v := mem.ptr_offset(srcRow, int(i))^;
                 if v == 0 do continue;
                 pixelColor := st.color;
                 pixelColor.a = v;
-                px := mem.ptr_offset(targetRow, int((u32(x) + i + u32(glyph.bitmap_left)) * 4));
+                px := mem.ptr_offset(targetRow, int((u32(x) + i + u32(ft_font.glyph.bitmap_left)) * 4));
                 mem.copy(px, &pixelColor, 4);
             }
         }
-
-        pixel_x_advance := face.glyph.advance.x / 64;
-        // pixel_y_advance := face.glyph.advance.y / 64;
-
-        x += pixel_x_advance;
-        // y += pixel_y_advance;
+        x += i64(pos.x_advance) / 64;
     }
     return surface;
 }
@@ -128,41 +144,35 @@ main :: proc() {
     renderer := sdl.create_renderer(window, -1, sdl.Renderer_Flags(0));
     sdl_image.init(sdl_image.Init_Flags.PNG);
 
-    ftlib: FT_Library;
-    if FT_Init_FreeType(&ftlib) != 0 {
+    ftlib: ft.Library;
+    if ft.Init_FreeType(&ftlib) != 0 {
         fmt.println("ft init failed!!");
         return;
     }
 
-    en_face: FT_Face;
-    jp_face: FT_Face;
-    ar_face: FT_Face;
-    FT_New_Face(ftlib, "fonts/NotoSans-Medium.ttf", 0, &en_face);
-    FT_New_Face(ftlib, "fonts/DroidNaskh-Regular.ttf", 0, &ar_face);
-    FT_New_Face(ftlib, "fonts/AiharaHudemojiKaisho2.01.ttf", 0, &jp_face);
-    faces := []FT_Face{ en_face, jp_face, ar_face };
+    fonts: FontSet;
+    LoadFont(ftlib, &fonts, "fonts/NotoSans-Medium.ttf");
+    LoadFont(ftlib, &fonts, "fonts/DroidNaskh-Regular.ttf");
+    LoadFont(ftlib, &fonts, "fonts/ackaisyo.ttf");
 
     txt_style := Text_Style{txt_color, 70};
     ime_style := Text_Style{ime_color, 70};
 
-    ft_surface := ft_render_text_run(faces, "hello 世界 هلة", txt_style);
-    ft_texture := sdl.create_texture_from_surface(renderer, ft_surface);
-    sdl.free_surface(ft_surface);
+    // ft_surface := ft_render_text_run(fonts, "hello 世界 هلة", txt_style);
+    // ft_texture := sdl.create_texture_from_surface(renderer, ft_surface);
+    // sdl.free_surface(ft_surface);
 
     texture := sdl_image.load_texture(renderer, "images/img1.png");
 
-    text_surface0 := ft_render_text_run(faces, "odin-sdl2 works!", txt_style);
+    text_surface0 := ft_render_text_run(&fonts, "HarfBuzz!!", txt_style);
     text_texture0 := sdl.create_texture_from_surface(renderer, text_surface0);
     sdl.free_surface(text_surface0);
 
-    text : string = "كتابة عربية";
-    text = shape(text);
-    text = strings.reverse(text); // temporary until we get bidi
-    text_surface1 := ft_render_text_run(faces, text, txt_style);
+    text_surface1 := ft_render_text_run(&fonts, "كتابة عَرَبيةٌ أهلاً وَ سهلا", txt_style);
     text_texture1 := sdl.create_texture_from_surface(renderer, text_surface1);
     sdl.free_surface(text_surface1);
 
-    text_surface2 := ft_render_text_run(faces, "日本語でも出来ます！", txt_style);
+    text_surface2 := ft_render_text_run(&fonts, "日本語でも！", txt_style);
     text_texture2 := sdl.create_texture_from_surface(renderer, text_surface2);
     sdl.free_surface(text_surface2);
 
@@ -204,7 +214,7 @@ main :: proc() {
                         sdl.destroy_texture(input_state.rendered_ime);
                         input_state.rendered_ime = nil;
                     }
-                    input_state.rendered_input = ft_render_text_run_to_texture(renderer, faces, string(input_state.data[:]), txt_style);
+                    input_state.rendered_input = ft_render_text_run_to_texture(renderer, &fonts, string(input_state.data[:]), txt_style);
                 case .Text_Editing:
                     input_string := as_string(e.text.text[:]);
                     fmt.println("text editing event", input_string);
@@ -214,7 +224,7 @@ main :: proc() {
                         sdl.destroy_texture(input_state.rendered_ime);
                         input_state.rendered_ime = nil;
                     }
-                    input_state.rendered_ime = ft_render_text_run_to_texture(renderer, faces, string(input_state.ime_data[:]), ime_style);
+                    input_state.rendered_ime = ft_render_text_run_to_texture(renderer, &fonts, string(input_state.ime_data[:]), ime_style);
             }
         }
         sdl.set_render_draw_color(renderer, bg_color.r, bg_color.g, bg_color.b, bg_color.a);
@@ -226,9 +236,8 @@ main :: proc() {
         pos.y = 460;
         pos.x = 100;
 
-        sdl.query_texture(ft_texture, nil, nil, &pos.w, &pos.h);
-        sdl.render_copy(renderer, ft_texture, nil, &pos);
-
+        // sdl.query_texture(ft_texture, nil, nil, &pos.w, &pos.h);
+        // sdl.render_copy(renderer, ft_texture, nil, &pos);
 
         pos.y += pos.h + 20;
         sdl.query_texture(text_texture0, nil, nil, &pos.w, &pos.h);
